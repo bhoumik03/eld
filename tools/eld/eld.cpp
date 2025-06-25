@@ -57,12 +57,18 @@ maybeExpandResponseFiles(llvm::ArrayRef<const char *> args,
 /// Universal linker main().
 int main(int Argc, const char **Argv) {
   // Standard set up, so program fails gracefully.
+  llvm::errs() << "latest build\n";
   llvm::BumpPtrAllocator Alloc;
   sys::PrintStackTraceOnErrorSignal(Argv[0]);
   PrettyStackTraceProgram StackPrinter(Argc, Argv);
   llvm_shutdown_obj Shutdown;
 
   std::vector<const char *> Args(Argv, Argv + Argc);
+
+  llvm::outs() << "Args: ";
+  for (const char *arg : Args)
+    llvm::outs() << arg << " ";
+  llvm::outs() << '\n';
 
   // Parse all the options.
   Driver driver(Flavor::Invalid, /*Triple=*/"");

@@ -78,6 +78,7 @@ Linker::~Linker() { reset(); }
 
 bool Linker::prepare(std::vector<InputAction *> &Actions,
                      const eld::Target *Target) {
+  std::cout << "prepare" << std::endl;
   if (ThisModule->getPrinter()->isVerbose())
     ThisConfig->raise(Diag::initializing_linker);
   {
@@ -145,7 +146,9 @@ bool Linker::prepare(std::vector<InputAction *> &Actions,
   return true;
 }
 
+#include <iostream>
 bool Linker::link() {
+  std::cout << "link:link" << std::endl;
   if (ThisModule->getPrinter()->isVerbose()) {
     ThisConfig->raise(Diag::beginning_link);
     ThisConfig->raise(Diag::initializing_standard_sections);
@@ -176,6 +179,7 @@ bool Linker::link() {
                          ThisConfig->options().printTimingStats());
     if (!resolve()) {
       // llvm::errs() << "resolve returning false!\n";
+      std::cout << "resolve failed" << std::endl;
       return false;
     }
   }
@@ -194,8 +198,9 @@ bool Linker::link() {
   {
     eld::RegisterTimer F("Prepare Output file", "Link Summary",
                          ThisConfig->options().printTimingStats());
+    std::cout << "before layout" << std::endl;
     if (!layout()) {
-      // llvm::errs() << "layout returning false!\n";
+      llvm::errs() << "layout returning false!\n";
       return false;
     }
   }
@@ -306,6 +311,7 @@ bool Linker::initializeInputTree(std::vector<InputAction *> &Actions) {
 
 /// normalize - to convert the command line language to the input tree.
 bool Linker::normalize() {
+  llvm::errs() << "normalize linker.cpp "<<"\n";
   if (ThisModule->getPrinter()->traceCommandLine()) {
     ThisConfig->printOptions(llvm::outs(), *Backend,
                              ThisConfig->options().color());
@@ -324,8 +330,10 @@ bool Linker::normalize() {
     LinkerProgress->incrementAndDisplayProgress();
     eld::RegisterTimer T("Read all Input files", "Read all Input files",
                          ThisConfig->options().printTimingStats());
-    if (!ObjLinker->normalize())
+    if (!ObjLinker->normalize()) {
+      std::cout << "objlinker normalize failed" << std::endl;
       return false;
+    }
   }
 
   if (ThisModule->getPrinter()->isVerbose())
@@ -335,8 +343,9 @@ bool Linker::normalize() {
     eld::RegisterTimer T("Load Linker Plugins", "Plugins",
                          ThisConfig->options().printTimingStats("Plugin"));
     // Load plugins.
-    if (!loadNonUniversalPlugins())
+    if (!loadNonUniversalPlugins()) {
       return false;
+    }
   }
 
   // 2. - set up code position
@@ -366,8 +375,9 @@ bool Linker::normalize() {
     eld::RegisterTimer T("Parse External scripts ", "Read all Input files",
                          ThisConfig->options().printTimingStats());
     LinkerProgress->incrementAndDisplayProgress();
-    if (!ObjLinker->parseVersionScript())
+    if (!ObjLinker->parseVersionScript()) {
       return false;
+    }
     if (ThisModule->getPrinter()->isVerbose())
       ThisConfig->raise(Diag::parsed_version_script);
     LinkerProgress->incrementAndDisplayProgress();
@@ -382,8 +392,9 @@ bool Linker::normalize() {
       eld::RegisterTimer T("Add Script Symbols", "Symbols from Linker Script",
                            ThisConfig->options().printTimingStats());
       // Add Linker script symbols.
-      if (!ObjLinker->addScriptSymbols())
+      if (!ObjLinker->addScriptSymbols()) {
         return false;
+      }
       if (ThisModule->getPrinter()->isVerbose())
         ThisConfig->raise(Diag::adding_script_symbols);
     }
@@ -396,8 +407,9 @@ bool Linker::normalize() {
     eld::RegisterTimer T("Perform LTO", "LTO",
                          ThisConfig->options().printTimingStats());
     // a. Create LTO Object file from bitcode inputs
-    if (!ObjLinker->createLTOObject())
+    if (!ObjLinker->createLTOObject()) {
       return false;
+    }
 
     if (ThisModule->getPrinter()->isVerbose())
       ThisConfig->raise(Diag::beginning_post_LTO_phase);
@@ -408,8 +420,10 @@ bool Linker::normalize() {
     if (TraceLto)
       ThisConfig->raise(Diag::note_lto_phase) << 2;
     LinkerProgress->incrementAndDisplayProgress();
-    if (!ObjLinker->normalize())
+    if (!ObjLinker->normalize()) {
+      llvm::errs() << "429" << "\n";
       return false;
+    }
   }
   return true;
 }
@@ -600,9 +614,10 @@ bool Linker::resolve() {
 
   return true;
 }
-
+#include <iostream>
 bool Linker::layout() {
   //  init relaxation stuff.
+  std::cout << "layout" << std::endl;
   {
     LinkerProgress->incrementAndDisplayProgress();
     eld::RegisterTimer T("Initialize Stubs", "Perform Layout",
