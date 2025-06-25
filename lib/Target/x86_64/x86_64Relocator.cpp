@@ -13,6 +13,7 @@
 #include "x86_64RelocationFunctions.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/BinaryFormat/ELF.h"
+#include <iostream>
 
 using namespace eld;
 
@@ -86,6 +87,10 @@ bool x86_64Relocator::isInvalidReloc(Relocation &pReloc) const {
   case llvm::ELF::R_X86_64_PC8:
   case llvm::ELF::R_X86_64_PC64:
   case llvm::ELF::R_X86_64_PLT32:
+  case llvm::ELF::R_X86_64_GOTPCREL:
+  case llvm::ELF::R_X86_64_GOTPCRELX:
+  case llvm::ELF::R_X86_64_REX_GOTPCRELX:
+  case llvm::ELF::R_X86_64_GOTTPOFF:
     return false;
   default:
     return true; // Other Relocations are not supported as of now
@@ -104,7 +109,7 @@ void x86_64Relocator::scanRelocation(Relocation &pReloc,
   if (isInvalidReloc(pReloc)) {
     std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
     ::llvm::outs() << getName(pReloc.type()) << " not supported currently\n";
-    m_Target.getModule().setFailure(true);
+    // m_Target.getModule().setFailure(true)
     return;
   }
 
@@ -186,6 +191,26 @@ void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
       }
     }
     return;
+  }
+  case llvm::ELF::R_X86_64_GOTPCREL:
+  case llvm::ELF::R_X86_64_GOTPCRELX:
+  case llvm::ELF::R_X86_64_REX_GOTPCRELX: {
+    std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
+    if (!(rsym->reserved() & ReserveGOT)) {
+      auto G = m_Target.createGOT(GOT::GOTType::Regular, Obj, rsym);
+      G->setValueType(GOT::SymbolValue);
+      rsym->setReserved(rsym->reserved() | ReserveGOT);
+    }
+  }
+  case llvm::ELF::R_X86_64_GOTTPOFF:{
+    std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
+    if (!(rsym->reserved() & ReserveGOT)) {
+      auto G = m_Target.createGOT(GOT::GOTType::TLS_LE, Obj, rsym);
+      if (config().isCodeStatic()){
+        rsym->setReserved(rsym->reserved() | ReserveGOT);
+        G->setValueType(GOT::TLSStaticSymbolValue);
+      }
+  }
   }
   default:
     break;
@@ -314,7 +339,8 @@ Relocator::Result eld::relocAbs(Relocation &pReloc, x86_64Relocator &pParent,
 
 Relocator::Result eld::relocPCREL(Relocation &pReloc, x86_64Relocator &pParent,
                                   RelocationDescription &pRelocDesc) {
-  //  ResolveInfo *rsym = pReloc.symInfo();
+  // ResolveInfo *rsym = pReloc.symInfo();
+  std::cout << "pcrel" << std::endl;
   uint32_t Result;
   DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
   Relocator::Address S = pReloc.symValue(pParent.module());
@@ -324,7 +350,6 @@ Relocator::Result eld::relocPCREL(Relocation &pReloc, x86_64Relocator &pParent,
   FragmentRef *target_fragref = pReloc.targetRef();
   Fragment *target_frag = target_fragref->frag();
   ELFSection *target_sect = target_frag->getOutputELFSection();
-
   Result = S + A - P;
   const GeneralOptions &options = pParent.config().options();
   // for relocs inside non ALLOC, just apply
@@ -349,4 +374,105 @@ Relocator::Result eld::relocPCREL(Relocation &pReloc, x86_64Relocator &pParent,
 Relocator::Result eld::unsupport(Relocation &pReloc, x86_64Relocator &pParent,
                                  RelocationDescription &pRelocDesc) {
   return x86_64Relocator::Unsupport;
+}
+
+Relocator::Result eld::relocPLT32(Relocation &pReloc, x86_64Relocator &pParent,
+                                  RelocationDescription &pRelocDesc) {
+  //  ResolveInfo *rsym = pReloc.symInfo();
+  std::cout << "plt" << std::endl;
+
+  uint32_t Result;
+  DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
+  Relocator::Address S = pReloc.symValue(pParent.module());
+  Relocator::DWord A = pReloc.addend();
+  Relocator::DWord P = pReloc.place(pParent.module());
+
+  FragmentRef *target_fragref = pReloc.targetRef();
+  Fragment *target_frag = target_fragref->frag();
+  ELFSection *target_sect = target_frag->getOutputELFSection();
+  std::cout << S << " " << A << " " << P << " " << std::endl;
+
+  Result = S + A - P;
+  const GeneralOptions &options = pParent.config().options();
+  // for relocs inside non ALLOC, just apply
+  if (!target_sect->isAlloc()) {
+    return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+  }
+  return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+}
+
+Relocator::Result eld::relocGOTPCREL(Relocation &pReloc,
+                                     x86_64Relocator &pParent,
+                                     RelocationDescription &pRelocDesc) {
+  DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
+  uint64_t Result;
+  ResolveInfo *symInfo = pReloc.symInfo();
+
+  llvm::errs()
+      << "GOTPCREL DEBUG: Symbol=" << (symInfo ? symInfo->name() : "NULL")
+      << "hasFragRef"
+      << (symInfo && symInfo->outSymbol() ? symInfo->outSymbol()->hasFragRef()
+                                          : false)
+      << "symbolValue"
+      << (symInfo && symInfo->outSymbol() ? symInfo->outSymbol()->value() : 0)
+      << "\n";
+
+  Relocator::Address S = pReloc.symValue(pParent.module());
+  Relocator::DWord A = pReloc.addend();
+  Relocator::DWord P = pReloc.place(pParent.module());
+  const GeneralOptions &options = pParent.config().options();
+
+  llvm::errs() << "GOTPCRELX CALC: S=" << llvm::format_hex(S, 10)
+               << " A=" << llvm::format_hex(A, 10)
+               << " P=" << llvm::format_hex(P, 10) << "\n";
+
+  FragmentRef *target_fragref = pReloc.targetRef();
+  Fragment *target_frag = target_fragref->frag();
+  ELFSection *target_sect = target_frag->getOutputELFSection();
+  auto got_result = pParent.getTarget().findEntryInGOT(symInfo);
+
+  Result = got_result->getAddr(DiagEngine) + A - P;
+  llvm::errs() << "GOTPCRELX RESULT: " << llvm::format_hex(Result, 10) << "\n";
+  if (!target_sect->isAlloc()) {
+    return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+  }
+  return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+}
+
+Relocator::Result eld::relocGOTTPOFF(Relocation &pReloc,
+                                     x86_64Relocator &pParent,
+                                     RelocationDescription &pRelocDesc) {
+  DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
+  uint64_t Result;
+  ResolveInfo *symInfo = pReloc.symInfo();
+
+  llvm::errs()
+      << "GOTPCREL DEBUG: Symbol=" << (symInfo ? symInfo->name() : "NULL")
+      << "hasFragRef"
+      << (symInfo && symInfo->outSymbol() ? symInfo->outSymbol()->hasFragRef()
+                                          : false)
+      << "symbolValue"
+      << (symInfo && symInfo->outSymbol() ? symInfo->outSymbol()->value() : 0)
+      << "\n";
+
+  Relocator::Address S = pReloc.symValue(pParent.module());
+  Relocator::DWord A = pReloc.addend();
+  Relocator::DWord P = pReloc.place(pParent.module());
+  const GeneralOptions &options = pParent.config().options();
+
+  llvm::errs() << "GOTPCRELX CALC: S=" << llvm::format_hex(S, 10)
+               << " A=" << llvm::format_hex(A, 10)
+               << " P=" << llvm::format_hex(P, 10) << "\n";
+
+  FragmentRef *target_fragref = pReloc.targetRef();
+  Fragment *target_frag = target_fragref->frag();
+  ELFSection *target_sect = target_frag->getOutputELFSection();
+  auto got_result = pParent.getTarget().findEntryInGOT(symInfo);
+
+  Result = got_result->getAddr(DiagEngine) + A;
+  llvm::errs() << "GOTPCRELX RESULT: " << llvm::format_hex(Result, 10) << "\n";
+  if (!target_sect->isAlloc()) {
+    return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+  }
+  return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
 }

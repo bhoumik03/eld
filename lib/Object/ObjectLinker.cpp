@@ -76,7 +76,6 @@
 #include <chrono>
 #include <mutex>
 #include <sstream>
-
 using namespace llvm;
 using namespace eld;
 namespace {
@@ -233,10 +232,10 @@ bool ObjectLinker::readLinkerScript(InputFile *Input) {
   }
   return true;
 }
-
+#include <iostream>
 bool ObjectLinker::readInputs(const std::vector<Node *> &InputVector) {
   typedef std::vector<Node *>::const_iterator Iter;
-
+  std::cout << "readinput objlinker.cpp" << std::endl;
   for (Iter Begin = InputVector.begin(), End = InputVector.end(); Begin != End;
        ++Begin) {
     // is a group node
@@ -258,17 +257,22 @@ bool ObjectLinker::readInputs(const std::vector<Node *> &InputVector) {
     // Resolve the path.
     if (!Input->resolvePath(ThisConfig)) {
       ThisModule->setFailure(true);
-      return false;
+      {
+        return false;
+      }
     }
     if (Input->isAlreadyReleased())
       continue;
-    if (!readAndProcessInput(Input, MPostLtoPhase))
+    if (!readAndProcessInput(Input, MPostLtoPhase)) {
+      std::cout << "readAndProcessInput objlinker.cpp failed" << std::endl;
       return false;
+    }
     if (Input->getInputFile()->getKind() == InputFile::GNULinkerScriptKind) {
       // Read inputs that the script contains.
       if (!readInputs(
               llvm::dyn_cast<eld::LinkerScriptFile>(Input->getInputFile())
                   ->getNodes())) {
+
         return false;
       }
     }
@@ -278,8 +282,9 @@ bool ObjectLinker::readInputs(const std::vector<Node *> &InputVector) {
 
 bool ObjectLinker::normalize() {
   if (MPostLtoPhase) {
-    if (!insertPostLTOELF())
+    if (!insertPostLTOELF()) {
       return false;
+    }
   } else {
     parseIncludeOrExcludeLTOfiles();
     ThisModule->getNamePool().setupNullSymbol();
@@ -291,6 +296,7 @@ bool ObjectLinker::normalize() {
   // Read all the inputs
   auto ReadSuccess = readInputs(CurBuilder->getInputBuilder().getInputs());
   if (!ReadSuccess) {
+    std::cout << "readsuccess objectlinker.cpp failed" << std::endl;
     return false;
   }
 
@@ -303,8 +309,9 @@ bool ObjectLinker::normalize() {
       return false;
     }
     Input->getAttribute().setPatchBase();
-    if (!readAndProcessInput(Input, MPostLtoPhase))
+    if (!readAndProcessInput(Input, MPostLtoPhase)) {
       return false;
+    }
   }
 
   ThisBackend.addSymbols();
@@ -601,6 +608,7 @@ void ObjectLinker::fixMergeStringRelocations() const {
         ThisConfig.raise(Diag::handling_merge_strings_for_section)
             << S->getDecoratedName(ThisConfig.options())
             << S->getInputFile()->getInput()->decoratedPath(true);
+        
       ThisBackend.getRelocator()->doMergeStrings(S);
     }
   }
@@ -1948,6 +1956,7 @@ bool ObjectLinker::scanRelocations(bool IsPartialLink) {
       !ThisConfig.isScanRelocationsMultiThreaded()) {
     if (ThisModule->getPrinter()->traceThreads())
       ThisConfig.raise(Diag::threads_disabled) << "ScanRelocations";
+
     for (auto &Input : ThisModule->getObjectList()) {
       auto CopyRelocs = std::make_unique<Relocator::CopyRelocs>();
       scanRelocationsHelper(Input, IsPartialLink, PluginVect, *CopyRelocs);
@@ -3476,6 +3485,8 @@ bool ObjectLinker::readAndProcessInput(Input *Input, bool IsPostLto) {
       ThisConfig.raiseDiagEntry(std::move(ExpParseFile.error()));
     if (!ExpParseFile.has_value() || !ExpParseFile.value()) {
       ThisModule->setFailure(true);
+      llvm::errs() << ExpParseFile.value() << "\n";
+      std::cout << "ExpParseFile objlinker.cpp failed" << std::endl;
       return false;
     }
     if (ELFOverridenWithBC) {

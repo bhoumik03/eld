@@ -1635,17 +1635,17 @@ bool GnuLdDriver::doLink(llvm::opt::InputArgList &Args,
     llvm::sys::AddSignalHandler(defaultSignalHandler, nullptr);
     Config.raise(Diag::default_signal_handler);
     linkStatus = linker.prepare(actions, ELDTarget);
-    // llvm::errs() << "prepare: linkStatus: " << linkStatus << "\n";
+    llvm::errs() << "prepare: linkStatus: " << linkStatus << "\n";
     if (!linkStatus || Config.options().getRecordInputFiles())
       handleReproduce<T>(Args, actions, false);
     if (linkStatus)
       linkStatus = linker.link();
-    // llvm::errs() << "link: linkStatus: " << linkStatus << "\n";
+    llvm::errs() << "link: linkStatus: " << linkStatus << "\n";
     if (!linkStatus || Config.options().getRecordInputFiles())
       handleReproduce<T>(Args, actions, true);
     linker.printLayout();
     linkStatus &= ThisModule->getPluginManager().callDestroyHook();
-    // llvm::errs() << "destroy hook: linkStatus: " << linkStatus << "\n";
+    llvm::errs() << "destroy hook: linkStatus: " << linkStatus << "\n";
     linker.unloadPlugins();
     linkStatus &= emitStats(*ThisModule);
   }
