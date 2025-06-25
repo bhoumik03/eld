@@ -32,16 +32,20 @@ eld::Expected<bool> ELFRelocObjParser::parseFile(InputFile &inputFile,
 
   auto expCompatibility = ELFReader->isCompatible();
   ELDEXP_RETURN_DIAGENTRY_IF_ERROR(expCompatibility);
-  if (!expCompatibility.value())
+  if (!expCompatibility.value()) {
+    llvm::errs() << "expCompatibility failed" << "\n";
     return false;
+  }
 
   ELFReader->recordInputActions();
 
   bool isPostLTOPhase = m_Module.isPostLTOPhase();
   eld::Expected<bool> expReadSectHeaders = readSectionHeaders(*ELFReader);
   ELDEXP_RETURN_DIAGENTRY_IF_ERROR(expReadSectHeaders);
-  if (!expReadSectHeaders.value())
+  if (!expReadSectHeaders.value()) {
+    llvm::errs() << "expreadsectheaders failed" << "\n";
     return false;
+  }
 
   ELFOverriddenWithBC =
       !isPostLTOPhase &&
@@ -53,22 +57,28 @@ eld::Expected<bool> ELFRelocObjParser::parseFile(InputFile &inputFile,
 
   eld::Expected<bool> expReadSections = readSections(*ELFReader);
   ELDEXP_RETURN_DIAGENTRY_IF_ERROR(expReadSections);
-  if (!expReadSections.value())
+  if (!expReadSections.value()) {
+    llvm::errs() << "expreadsections failed" << "\n";
     return false;
+  }
 
   eld::Expected<bool> expReadSymbols = ELFReader->readSymbols();
   ELDEXP_RETURN_DIAGENTRY_IF_ERROR(expReadSymbols)
-  if (!expReadSymbols.value())
+  if (!expReadSymbols.value()) {
+    llvm::errs() << "expreadsymbols failed for "
+                 << inputFile.getInput()->decoratedPath() << "\n";
     return false;
+  }
 
   if (isPostLTOPhase)
     ELFReader->setPostLTOCommonSymbolsOrigin();
 
   eld::Expected<bool> expReadGroups = readGroups(*ELFReader);
   ELDEXP_RETURN_DIAGENTRY_IF_ERROR(expReadGroups);
-  if (!expReadGroups.value())
+  if (!expReadGroups.value()) {
+    llvm::errs() << "expreadgroups failed" << "\n";
     return false;
-
+  }
   return true;
 }
 
