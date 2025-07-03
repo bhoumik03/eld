@@ -247,6 +247,25 @@ void x86_64LDBackend::setDefaultConfigs() {
   }
 }
 
+void x86_64LDBackend::doPreLayout() {
+  if ((!config().isCodeStatic() || config().options().forceDynamic()) &&
+      nullptr == m_pDynamic)
+    m_pDynamic = make<x86_64ELFDynamic>(*this, config());
+
+  if (LinkerConfig::Object != config().codeGenType()) {
+    getRelaPLT()->setSize(getRelaPLT()->getRelocations().size() *
+                          getRelaEntrySize());
+    getRelaDyn()->setSize(getRelaDyn()->getRelocations().size() *
+                          getRelaEntrySize());
+    m_Module.addOutputSection(getRelaPLT());
+    m_Module.addOutputSection(getRelaDyn());
+  }
+}
+
+
+
+x86_64ELFDynamic *x86_64LDBackend::dynamic() { return m_pDynamic; }
+
 namespace eld {
 
 //===----------------------------------------------------------------------===//

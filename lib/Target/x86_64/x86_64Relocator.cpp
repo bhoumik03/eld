@@ -183,7 +183,7 @@ void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
     std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
     // Absolute relocation type, symbol may needs PLT entry or
     // dynamic relocation entry
-    if (rsym->type() == ResolveInfo::Function) {
+    if (rsym && rsym->type() == ResolveInfo::Function) {
       // create PLT for this symbol if it does not have.
       if (!(rsym->reserved() & ReservePLT)) {
         m_Target.createPLT(Obj, rsym);
@@ -201,6 +201,7 @@ void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
       G->setValueType(GOT::SymbolValue);
       rsym->setReserved(rsym->reserved() | ReserveGOT);
     }
+    return;
   }
 
   default:
