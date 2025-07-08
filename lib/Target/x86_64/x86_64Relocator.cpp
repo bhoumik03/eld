@@ -90,6 +90,8 @@ bool x86_64Relocator::isInvalidReloc(Relocation &pReloc) const {
   case llvm::ELF::R_X86_64_GOTPCREL:
   case llvm::ELF::R_X86_64_GOTPCRELX:
   case llvm::ELF::R_X86_64_REX_GOTPCRELX:
+  case llvm::ELF::R_X86_64_TPOFF32:
+  case llvm::ELF::R_X86_64_TPOFF64:
 
     return false;
   default:
@@ -358,6 +360,41 @@ Relocator::Result eld::relocPCREL(Relocation &pReloc, x86_64Relocator &pParent,
   //      return Relocator::OK;
   //    }
   //  }
+
+  return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+}
+
+Relocator::Result eld::relocTPOFF32(Relocation &pReloc,
+                                    x86_64Relocator &pParent,
+                                    RelocationDescription &pRelocDesc) {
+
+  DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
+  // Relocator::Address S = pReloc.symValue(pParent.module());
+  Relocator::Address S = pParent.getSymValue(&pReloc);
+  Relocator::DWord A = pReloc.addend();
+
+  const GeneralOptions &options = pParent.config().options();
+
+  uint64_t tp_offset = GNULDBackend::getTLSTemplateSize();
+  uint32_t Result = S + A - tp_offset;
+
+  return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+}
+
+Relocator::Result eld::relocTPOFF64(Relocation &pReloc,
+                                    x86_64Relocator &pParent,
+                                    RelocationDescription &pRelocDesc) {
+
+  DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
+  // Relocator::Address S = pReloc.symValue(pParent.module());
+  Relocator::Address S = pParent.getSymValue(&pReloc);
+
+  Relocator::DWord A = pReloc.addend();
+
+  const GeneralOptions &options = pParent.config().options();
+
+  uint64_t tp_offset = GNULDBackend::getTLSTemplateSize();
+  uint64_t Result = S + A - tp_offset;
 
   return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
 }
