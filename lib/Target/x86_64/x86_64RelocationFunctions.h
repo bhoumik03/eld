@@ -34,6 +34,21 @@ x86_64Relocator::Result relocTPOFF32(Relocation &pEntry,
 x86_64Relocator::Result relocTPOFF64(Relocation &pEntry,
                                      x86_64Relocator &pParent,
                                      RelocationDescription &RelocDesc);
+x86_64Relocator::Result relocDTPOFF32(Relocation &pEntry,
+                                     x86_64Relocator &pParent,
+                                     RelocationDescription &RelocDesc);
+x86_64Relocator::Result relocDTPOFF64(Relocation &pEntry,
+                                     x86_64Relocator &pParent,
+                                     RelocationDescription &RelocDesc);
+x86_64Relocator::Result relocDTPMOD64(Relocation &pEntry,
+                                     x86_64Relocator &pParent,
+                                     RelocationDescription &RelocDesc);
+x86_64Relocator::Result relocGOT32(Relocation &pEntry,
+                                     x86_64Relocator &pParent,
+                                     RelocationDescription &RelocDesc);                                  
+x86_64Relocator::Result relocGOTPC32(Relocation &pEntry,
+                                     x86_64Relocator &pParent,
+                                     RelocationDescription &RelocDesc);  
 
 struct RelocationDescription;
 
@@ -64,7 +79,7 @@ struct RelocationDescription x86RelocDesc[] = {
     {/*.func = */ &relocPCREL,
      /*.type = */ llvm::ELF::R_X86_64_PC32,
      /*.forceVerify = */ false},
-    {/*.func = */ none,
+    {/*.func = */ &relocGOT32,
      /*.type = */ llvm::ELF::R_X86_64_GOT32,
      /*.forceVerify = */ false},
     {/*.func = */ &relocPLT32,
@@ -103,10 +118,10 @@ struct RelocationDescription x86RelocDesc[] = {
     {/*.func = */ &relocPCREL,
      /*.type = */ llvm::ELF::R_X86_64_PC8,
      /*.forceVerify = */ false},
-    {/*.func = */ none,
+    {/*.func = */ &relocDTPMOD64,
      /*.type = */ llvm::ELF::R_X86_64_DTPMOD64,
      /*.forceVerify = */ false},
-    {/*.func = */ none,
+    {/*.func = */ &relocDTPOFF64,
      /*.type = */ llvm::ELF::R_X86_64_DTPOFF64,
      /*.forceVerify = */ false},
     {/*.func = */ &relocTPOFF64,
@@ -118,7 +133,7 @@ struct RelocationDescription x86RelocDesc[] = {
     {/*.func = */ none,
      /*.type = */ llvm::ELF::R_X86_64_TLSLD,
      /*.forceVerify = */ false},
-    {/*.func = */ none,
+    {/*.func = */ &relocDTPOFF32,
      /*.type = */ llvm::ELF::R_X86_64_DTPOFF32,
      /*.forceVerify = */ false},
     {/*.func = */ none,
@@ -131,7 +146,9 @@ struct RelocationDescription x86RelocDesc[] = {
      /*.type = */ llvm::ELF::R_X86_64_PC64,
      /*.forceVerify = */ false},
     {/*.func = */ none, /*.type = */ 25, /*.forceVerify = */ false},
-    {/*.func = */ none, /*.type = */ 26, /*.forceVerify = */ false},
+    {/*.func = */ &relocGOTPC32,
+     /*.type = */ llvm::ELF::R_X86_64_GOTPC32,
+     /*.forceVerify = */ false},
     {/*.func = */ none, /*.type = */ 27, /*.forceVerify = */ false},
     {/*.func = */ none, /*.type = */ 28, /*.forceVerify = */ false},
     {/*.func = */ none, /*.type = */ 29, /*.forceVerify = */ false},

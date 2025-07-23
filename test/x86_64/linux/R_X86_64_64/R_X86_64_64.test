@@ -1,0 +1,15 @@
+#---R_X86_64_64.test----------------- Executable --------------------#
+
+BEGIN_COMMENT
+# Test R_X86_64_64 relocation type
+#This test verifies 64-bit absolute addressing works correctly
+#Uses movabs instruction to generate R_X86_64_64 relocation
+#END_COMMENT
+
+#START_TEST
+RUN: %clang %clangopts -c %p/Inputs/1.c -o %t.1.o
+RUN: %link %linkopts -o %t.1.out %t.1.o 
+RUN: %t.1.out; echo $? > %t.code
+RUN: %filecheck --input-file=%t.code %s --check-prefix=EXITCODE
+EXITCODE: 42
+#END_TEST

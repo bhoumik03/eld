@@ -1,0 +1,17 @@
+#---GOTPCREL.test----------------- Executable --------------------#
+
+BEGIN_COMMENT
+# Test GOTPCREL relocation support in eld
+# This test verifies that eld correctly handles R_X86_64_GOTPCREL relocations
+# for global variable access through the Global Offset Table.
+# The test uses a global variable accessed via GOTPCREL and verifies
+# that the GOT entry is properly created and the relocation is resolved.
+END_COMMENT
+
+#START_TEST
+RUN: %clang %clangopts -c %p/Inputs/gotpcrel.c -o %t.gotpcrel.o
+RUN: %link %linkopts -o %t.gotpcrel.out %t.gotpcrel.o --image-base=0x400000
+RUN: %t.gotpcrel.out; echo $? > %t.code
+RUN: %filecheck --input-file=%t.code %s --check-prefix=EXITCODE
+EXITCODE: 42
+#END_TEST
