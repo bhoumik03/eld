@@ -133,6 +133,7 @@ ELFSection *Fragment::getOutputELFSection() const {
 
 // Pass DiagEngine here.
 uint64_t Fragment::getAddr(DiagnosticEngine *DiagEngine) const {
+  // ASSERT(getOutputELFSection() != nullptr, "elfsec must not be null");
   return getOutputELFSection()->addr() + getOffset(DiagEngine);
 }
 
