@@ -13,6 +13,7 @@
 #include "x86_64RelocationFunctions.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/BinaryFormat/ELF.h"
+#include <cstddef>
 
 using namespace eld;
 
@@ -89,6 +90,16 @@ bool x86_64Relocator::isInvalidReloc(Relocation &pReloc) const {
   case llvm::ELF::R_X86_64_GOTPCREL:
   case llvm::ELF::R_X86_64_GOTPCRELX:
   case llvm::ELF::R_X86_64_REX_GOTPCRELX:
+  case llvm::ELF::R_X86_64_GOT32:
+  case llvm::ELF::R_X86_64_GOTTPOFF:
+  case llvm::ELF::R_X86_64_TPOFF32:
+  case llvm::ELF::R_X86_64_TPOFF64:
+  case llvm::ELF::R_X86_64_DTPOFF32:
+  case llvm::ELF::R_X86_64_DTPOFF64:
+  case llvm::ELF::R_X86_64_GOTOFF64:
+  case llvm::ELF::R_X86_64_GOTPC32:
+  case llvm::ELF::R_X86_64_SIZE32:
+  case llvm::ELF::R_X86_64_SIZE64:
     return false;
   default:
     return true; // Other Relocations are not supported as of now
@@ -113,9 +124,13 @@ void x86_64Relocator::scanRelocation(Relocation &pReloc,
 
   // rsym - The relocation target symbol
   ResolveInfo *rsym = pReloc.symInfo();
+
   assert(nullptr != rsym &&
          "ResolveInfo of relocation not set while scanRelocation");
-
+  if (pReloc.type() == llvm::ELF::R_X86_64_GOTTPOFF) {
+    llvm::errs() << "SCAN: GOTTPOFF for symbol: " << rsym->name()
+                 << " isLocal: " << rsym->isLocal() << "\n";
+  }
   // Check if we are tracing relocations.
   if (m_Module.getPrinter()->traceReloc()) {
     std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
@@ -154,13 +169,34 @@ void x86_64Relocator::scanRelocation(Relocation &pReloc,
 void x86_64Relocator::scanLocalReloc(InputFile &pInputFile, Relocation &pReloc,
                                      eld::IRBuilder &pBuilder,
                                      ELFSection &pSection) {
-  // rsym - The relocation target symbol
   ResolveInfo *rsym = pReloc.symInfo();
 
-  // Special case when the linker makes a symbol local for example linker
-  // defined symbols such as _DYNAMIC
+  // Handle GOT-based relocations for local symbols
   switch (pReloc.type()) {
-
+  case llvm::ELF::R_X86_64_GOT32:
+  case llvm::ELF::R_X86_64_GOTPCREL:
+  case llvm::ELF::R_X86_64_GOTPCRELX:
+  case llvm::ELF::R_X86_64_REX_GOTPCRELX: {
+    if (!(rsym->reserved() & ReserveGOT)) {
+      ELFObjectFile *Obj = llvm::dyn_cast<ELFObjectFile>(&pInputFile);
+      std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
+      x86_64GOT *gotEntry =
+          m_Target.createGOT(GOT::GOTType::Regular, Obj, rsym);
+      gotEntry->setValueType(GOT::SymbolValue); // Regular symbol value
+      rsym->setReserved(rsym->reserved() | ReserveGOT);
+    }
+    break;
+  }
+  case llvm::ELF::R_X86_64_GOTTPOFF: {
+    if (!(rsym->reserved() & ReserveGOT)) {
+      ELFObjectFile *Obj = llvm::dyn_cast<ELFObjectFile>(&pInputFile);
+      std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
+      x86_64GOT *gotEntry = m_Target.createGOT(GOT::GOTType::TLS_LE, Obj, rsym);
+      gotEntry->setValueType(GOT::TLSStaticSymbolValue); // TLS value
+      rsym->setReserved(rsym->reserved() | ReserveGOT);
+    }
+    break;
+  }
   default:
     break;
   }
@@ -190,6 +226,7 @@ void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
     }
     return;
   }
+  case llvm::ELF::R_X86_64_GOT32:
   case llvm::ELF::R_X86_64_GOTPCREL:
   case llvm::ELF::R_X86_64_GOTPCRELX:
   case llvm::ELF::R_X86_64_REX_GOTPCRELX: {
@@ -201,6 +238,22 @@ void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
       rsym->setReserved(rsym->reserved() | ReserveGOT);
     }
   } break;
+  case llvm::ELF::R_X86_64_GOTTPOFF: {
+    llvm::errs() << "GOTTPOFF: scanGlobalReloc called for symbol: "
+                 << rsym->name() << "\n";
+    if (!(rsym->reserved() & ReserveGOT)) {
+      llvm::errs() << "GOTTPOFF: Creating GOT entry for: " << rsym->name()
+                   << "\n";
+      std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
+      x86_64GOT *gotEntry = m_Target.createGOT(GOT::GOTType::TLS_LE, Obj, rsym);
+      gotEntry->setValueType(GOT::TLSStaticSymbolValue);
+      rsym->setReserved(rsym->reserved() | ReserveGOT);
+      llvm::errs() << "GOTTPOFF: GOT entry created successfully\n";
+    } else {
+      llvm::errs() << "GOTTPOFF: Symbol already has ReserveGOT flag\n";
+    }
+  } break;
+
   default:
     break;
 
@@ -392,6 +445,194 @@ Relocator::Result eld::relocGOTPCREL(Relocation &pReloc,
   // Calculate GOTPCREL: GOT[S] + A - P
   x86_64GOT *gotEntry = pParent.getTarget().findEntryInGOT(symInfo);
   uint64_t Result = gotEntry->getAddr(DiagEngine) + A - P;
+
+  return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+}
+
+Relocator::Result eld::relocTPOFF32(Relocation &pReloc,
+                                    x86_64Relocator &pParent,
+                                    RelocationDescription &pRelocDesc) {
+  DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
+  const GeneralOptions &options = pParent.config().options();
+
+  uint64_t TLSTemplateSize = pParent.getTarget().getTLSTemplateSize();
+
+  uint64_t S = pParent.getSymValue(&pReloc);
+  Relocator::DWord A = pReloc.addend();
+
+  int64_t Result = static_cast<int64_t>(S + A - TLSTemplateSize);
+
+  return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+}
+
+Relocator::Result eld::relocTPOFF64(Relocation &pReloc,
+                                    x86_64Relocator &pParent,
+                                    RelocationDescription &pRelocDesc) {
+  DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
+  const GeneralOptions &options = pParent.config().options();
+
+  uint64_t TLSTemplateSize = pParent.getTarget().getTLSTemplateSize();
+
+  uint64_t S = pParent.getSymValue(&pReloc);
+  Relocator::DWord A = pReloc.addend();
+
+  int64_t Result = static_cast<int64_t>(S + A - TLSTemplateSize);
+
+  return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+}
+
+Relocator::Result eld::relocGOTTPOFF(Relocation &pReloc,
+                                     x86_64Relocator &pParent,
+                                     RelocationDescription &pRelocDesc) {
+  DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
+  ResolveInfo *symInfo = pReloc.symInfo();
+  llvm::errs() << "GOTTPOFF: relocGOTTPOFF called for symbol: "
+               << symInfo->name() << "\n";
+  llvm::errs() << "GOTTPOFF: Symbol reserved flags: " << symInfo->reserved()
+               << "\n";
+
+  const GeneralOptions &options = pParent.config().options();
+
+  Relocator::DWord A = pReloc.addend();
+  Relocator::DWord P = pReloc.place(pParent.module());
+
+  x86_64GOT *gotEntry = pParent.getTarget().findEntryInGOT(symInfo);
+  llvm::errs() << "GOTTPOFF: findEntryInGOT returned: " << gotEntry << "\n";
+
+  // ASSERT(gotEntry != nullptr, "must not be null");
+  int64_t Result = (gotEntry->getAddr(DiagEngine) + A - P);
+
+  return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+}
+
+Relocator::Result eld::relocDTPOFF32(Relocation &pReloc,
+                                     x86_64Relocator &pParent,
+                                     RelocationDescription &pRelocDesc) {
+  DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
+  const GeneralOptions &options = pParent.config().options();
+
+  uint64_t S = pParent.getSymValue(&pReloc);
+  Relocator::DWord A = pReloc.addend();
+
+  int64_t Result;
+  // for static
+  Result = (S + A);
+
+  return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+}
+
+Relocator::Result eld::relocDTPOFF64(Relocation &pReloc,
+                                     x86_64Relocator &pParent,
+                                     RelocationDescription &pRelocDesc) {
+  DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
+  const GeneralOptions &options = pParent.config().options();
+
+  uint64_t S = pParent.getSymValue(&pReloc);
+  Relocator::DWord A = pReloc.addend();
+
+  int64_t Result;
+  // for static
+  Result = (S + A);
+
+  return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+}
+
+Relocator::Result eld::relocGOT32(Relocation &pReloc, x86_64Relocator &pParent,
+                                  RelocationDescription &pRelocDesc) {
+  DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
+  ResolveInfo *symInfo = pReloc.symInfo();
+  const GeneralOptions &options = pParent.config().options();
+
+  Relocator::DWord A = pReloc.addend();
+
+  x86_64GOT *gotEntry = pParent.getTarget().findEntryInGOT(symInfo);
+  uint32_t Result = (gotEntry->getAddr(DiagEngine) + A);
+
+  return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+}
+
+Relocator::Result eld::relocGOTOFF64(Relocation &pReloc,
+                                     x86_64Relocator &pParent,
+                                     RelocationDescription &pRelocDesc) {
+  DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
+  const GeneralOptions &options = pParent.config().options();
+
+  // Calculate GOTOFF64: S + A - GOT
+  // S = symbol value, A = addend, GOT = base address of .got section
+  Relocator::Address S = pReloc.symValue(pParent.module());
+  Relocator::DWord A = pReloc.addend();
+
+  // Get GOT base address
+  ELFSection *gotSection = pParent.getTarget().getGOT();
+  if (!gotSection) {
+    return Relocator::BadReloc;
+  }
+  uint64_t GOTBase = gotSection->addr();
+
+  uint64_t Result = S + A - GOTBase;
+
+  return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+}
+
+Relocator::Result eld::relocGOTPC32(Relocation &pReloc,
+                                    x86_64Relocator &pParent,
+                                    RelocationDescription &pRelocDesc) {
+  DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
+  const GeneralOptions &options = pParent.config().options();
+
+  // Calculate GOTPC32: GOT + A - P
+  // GOT = base address of .got section, A = addend, P = place being relocated
+  Relocator::DWord A = pReloc.addend();
+  Relocator::DWord P = pReloc.place(pParent.module());
+
+  // Get GOT base address
+  ELFSection *gotSection = pParent.getTarget().getGOT();
+  if (!gotSection) {
+    return Relocator::BadReloc;
+  }
+  uint64_t GOTBase = gotSection->addr();
+
+  uint32_t Result = static_cast<uint32_t>(GOTBase + A - P);
+
+  return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+}
+
+Relocator::Result eld::relocSIZE32(Relocation &pReloc, x86_64Relocator &pParent,
+                                   RelocationDescription &pRelocDesc) {
+  DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
+  const GeneralOptions &options = pParent.config().options();
+
+  // Calculate SIZE32: Z + A
+  // Z = size of symbol, A = addend
+  ResolveInfo *symInfo = pReloc.symInfo();
+  if (!symInfo || !symInfo->outSymbol()) {
+    return Relocator::BadReloc;
+  }
+
+  uint64_t symbolSize = symInfo->outSymbol()->size();
+  Relocator::DWord A = pReloc.addend();
+
+  uint32_t Result = static_cast<uint32_t>(symbolSize + A);
+
+  return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+}
+
+Relocator::Result eld::relocSIZE64(Relocation &pReloc, x86_64Relocator &pParent,
+                                   RelocationDescription &pRelocDesc) {
+  DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
+  const GeneralOptions &options = pParent.config().options();
+
+  // Calculate SIZE64: Z + A
+  // Z = size of symbol, A = addend
+  ResolveInfo *symInfo = pReloc.symInfo();
+  if (!symInfo || !symInfo->outSymbol()) {
+    return Relocator::BadReloc;
+  }
+
+  uint64_t symbolSize = symInfo->outSymbol()->size();
+  Relocator::DWord A = pReloc.addend();
+
+  uint64_t Result = symbolSize + A;
 
   return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
 }
