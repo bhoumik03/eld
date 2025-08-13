@@ -1,0 +1,141 @@
+name: ELD Build and Test on Runner
+
+on: 
+  push:
+    branches: [nightly-musl-test]
+  workflow_dispatch:
+
+jobs:
+  build-and-test-eld:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Install Build Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            cmake ninja-build \
+            clang-19 lld \
+            libc++-dev libc++abi-dev \
+            git
+            
+      - name: Checkout LLVM Project
+        uses: actions/checkout@v4
+        with:
+          repository: llvm/llvm-project
+          path: llvm-project
+          ref: main
+          
+      - name: Checkout ELD
+        uses: actions/checkout@v4
+        with:
+          path: llvm-project/eld
+          ref: nightly-musl-test
+          
+      - name: Configure Build (Minimal for Speed)
+        run: |
+          mkdir obj
+          cd obj
+          
+          echo "=== Configuring minimal LLVM + ELD build ==="
+          cmake -G Ninja \
+            -DLLVM_EXTERNAL_PROJECTS="eld" \
+            -DLLVM_EXTERNAL_ELD_SOURCE_DIR=../llvm-project/eld \
+            -DLLVM_TARGETS_TO_BUILD="X86" \
+            -DELD_TARGETS_TO_BUILD="x86_64" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=../inst \
+            -DLLVM_ENABLE_PROJECTS="llvm" \
+            -DLLVM_USE_LINKER=lld \
+            -DCMAKE_C_COMPILER=clang-19 \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
+            -DLLVM_OPTIMIZED_TABLEGEN=ON \
+            -DLLVM_ENABLE_ASSERTIONS=OFF \
+            -DLLVM_INCLUDE_EXAMPLES=OFF \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            -DLLVM_INCLUDE_BENCHMARKS=OFF \
+            -B . \
+            -S ../llvm-project/llvm
+            
+      - name: Build ELD Only
+        run: |
+          cd obj
+          echo "=== Building ELD ($(date)) ==="
+          
+          # Build only what we need for ELD
+          ninja ld.eld
+          
+          echo "=== Build completed ($(date)) ==="
+          
+      - name: Install ELD
+        run: |
+          cd obj
+          ninja install
+          
+      - name: Verify ELD Installation
+        run: |
+          echo "=== Verifying ELD installation ==="
+          ls -la inst/bin/
+          ls -la inst/lib/ | head -10
+          
+          echo "ELD binary info:"
+          file inst/bin/ld.eld
+          
+          echo "ELD dependencies:"
+          ldd inst/bin/ld.eld || echo "Static binary"
+          
+      - name: Test ELD Basic Functionality
+        run: |
+          echo "=== Testing ELD basic functionality ==="
+          
+          # Set library path
+          export LD_LIBRARY_PATH=$PWD/inst/lib:$LD_LIBRARY_PATH
+          
+          # Create test program
+          cat > test.c << 'EOF'
+          void _start() {
+            long u = 7;
+            asm (
+              "movq $60, %%rax\n"
+              "movq %0, %%rdi\n"
+              "syscall\n"
+              :
+              : "r" (u)
+              : "%rax", "%rdi"
+            );
+          }
+          EOF
+          
+          # Compile and link with ELD
+          clang-19 -c test.c -o test.o
+          ./inst/bin/ld.eld -m elf_x86_64 -o test.out test.o
+          
+          # Test execution
+          ./test.out
+          EXIT_CODE=$?
+          
+          if [ $EXIT_CODE -eq 7 ]; then
+            echo "✅ ELD test successful!"
+          else
+            echo "❌ ELD test failed (exit code: $EXIT_CODE)"
+            exit 1
+          fi
+          
+      - name: Build Statistics
+        run: |
+          echo "=== Build Statistics ==="
+          echo "Build time: Check workflow duration"
+          echo "Build directory size: $(du -sh obj/ 2>/dev/null || echo 'N/A')"
+          echo "Install directory size: $(du -sh inst/ 2>/dev/null || echo 'N/A')"
+          echo "ELD binary size: $(du -sh inst/bin/ld.eld 2>/dev/null || echo 'N/A')"
+          
+      - name: Success Summary
+        run: |
+          echo "=== SUCCESS SUMMARY ==="
+          echo "✅ LLVM + ELD build: OK"
+          echo "✅ ELD installation: OK"
+          echo "✅ ELD linking test: OK"
+          echo "✅ Program execution: OK"
+          echo ""
+          echo "🎉 ELD built and tested successfully on GitHub runner!"
