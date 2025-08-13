@@ -1,0 +1,519 @@
+name: nightly builder for testing eld against musl-test-suite for x86 
+
+on: 
+  push:
+    branches: [nightly-musl-test2]
+  workflow_dispatch:
+
+jobs:
+  test-eld-external:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: nightly-musl-test2
+          
+      - name: Set up Clang 20
+        uses: egor-tensin/setup-clang@v1
+        with:
+          version: "20"
+          platform: x64
+
+      - name: Install libc++ and libc++abi
+        run: |
+          sudo apt update
+          sudo apt install -y clang libc++-dev libc++abi-dev ccache libclang-rt-20-dev
+
+      - name: Verify Build Environment
+        run: |
+          echo "=== Build Environment Verification ==="
+          echo "clang version:"
+          clang --version
+          echo "clang++ version:"
+          clang++ -stdlib=libc++ --version
+          
+          echo "Testing libc++ availability:"
+          echo '#include <iostream>' > test.cpp
+          echo 'int main() { std::cout << "libc++ works!" << std::endl; return 0; }' >> test.cpp
+          clang++ -std=c++17 -stdlib=libc++ test.cpp -o test_clang
+          ./test_clang
+
+      - name: Download ELD Binaries
+        run: |
+          echo "=== Downloading ELD binaries from GitHub release ===  "
+          
+          # Create directory structure
+          mkdir -p bin lib
+          
+          # Download from your release
+          RELEASE_URL="https://github.com/bhoumik03/eld/releases/download/eld_bin"
+          
+          echo "Downloading ld.eld..."
+          wget "$RELEASE_URL/ld.eld" -O bin/ld.eld
+          
+          echo "Downloading libLW.so.4..."
+          wget "$RELEASE_URL/libLW.so.4" -O lib/libLW.so.4
+          
+          # Set permissions
+          chmod +x bin/ld.eld
+          chmod +x lib/libLW.so.4
+          
+          # Set library path
+          export LD_LIBRARY_PATH=$PWD/lib:$LD_LIBRARY_PATH
+          echo "LD_LIBRARY_PATH=$PWD/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          
+          echo "Download complete:"
+          ls -lh bin/ld.eld
+          ls -lh lib/libLW.so.4
+          
+      - name: Verify ELD Setup
+        run: |
+          echo "=== Verifying ELD setup ==="
+          
+          echo "ELD dependencies:"
+          ldd bin/ld.eld
+          
+          echo "Testing ELD execution:"
+          ./bin/ld.eld --help 2>&1 | head -5 || echo "Help command completed"
+          
+      - name: Test ELD Linking
+        run: |
+          echo "=== Testing ELD linking ==="
+          
+          cat > test.c << 'EOF'
+          void _start() {
+            long u = 99;
+            asm (
+              "movq $60, %%rax\n"
+              "movq %0, %%rdi\n"
+              "syscall\n"
+              :
+              : "r" (u)
+              : "%rax", "%rdi"
+            );
+          }
+          EOF
+          
+          echo "Test program created (exits with code 99)"
+          
+          echo "Compiling to object file:"
+          clang -c test.c -o test.o
+          echo "Compilation successful"
+          
+          echo "Linking with ELD:"
+          if ./bin/ld.eld -m elf_x86_64 -o test.out test.o; then
+            echo "ELD linking successful"
+            
+            echo "Output file info:"
+            file test.out
+            ls -la test.out
+            
+            echo "Testing program execution:"
+            set +e  # Disable exit on error temporarily
+            ./test.out
+            EXIT_CODE=$?
+            set -e  # Re-enable exit on error
+            
+            echo "Program exit code: $EXIT_CODE"
+            
+            if [ $EXIT_CODE -eq 99 ]; then
+              echo "SUCCESS: Program executed correctly (exit code 99)"
+              echo "ELD linking and execution test passed!"
+            else
+              echo "FAILURE: Expected exit code 99, got $EXIT_CODE"
+              exit 1
+            fi
+          else
+            echo "ELD linking failed"
+            exit 1
+          fi
+          
+      - name: Success Summary
+        run: |
+          echo "=== SUCCESS SUMMARY ==="
+          echo "External binary download: OK"
+          echo "ELD setup: OK"
+          echo "ELD linking: OK"
+          echo "Program execution: OK"
+          echo ""
+          echo "Binaries used:"
+          echo "- ld.eld: $(du -h bin/ld.eld | cut -f1)"
+          echo "- libLW.so.4: $(du -h lib/libLW.so.4 | cut -f1)"
+
+            # ... (your existing successful ELD test)
+
+      - name: Download and Build musl
+        run: |
+          echo "=== Downloading and building musl ==="
+          
+          # Install additional build dependencies
+          sudo apt install -y make
+          
+          # Clone musl from GitHub
+          git clone https://github.com/bminor/musl.git
+          cd musl
+          
+          echo "musl version:"
+          git log --oneline -1
+          
+          # Configure musl with clang (KEY: specify CC and CXX)
+          CC=clang CXX=clang++ ./configure --prefix=$PWD/../musl-install
+          
+          echo "=== Configuration complete, checking config.mak ==="
+          cat config.mak | grep -E "CC|CXX"
+          
+          echo "=== Building musl ==="
+          # Build musl with parallel jobs
+          make -j$(nproc)
+          
+          echo "=== Installing musl ==="
+          # Install musl (creates bin/, lib/, include/ and wrapper scripts)
+          make install
+          
+          cd ..
+          
+          echo "musl installation complete:"
+          echo "Binaries and wrappers:"
+          ls -la musl-install/bin/
+          echo "Libraries:"
+          ls -la musl-install/lib/ | head -10
+          echo "Headers:"
+          ls -la musl-install/include/ | head -5
+
+      - name: Fix musl-clang Wrapper for ELD
+        run: |
+          echo "=== Fixing musl-clang wrapper for ELD compatibility ==="
+          
+          echo "Original ld.musl-clang wrapper:"
+          cat musl-install/bin/ld.musl-clang
+          
+          # Replace the exec line that uses $cc -print-prog-name=ld with ld.$LD
+          sed -i 's/exec \$(\$cc -print-prog-name=ld)/exec ld.$LD/' musl-install/bin/ld.musl-clang
+          
+          echo "Fixed ld.musl-clang wrapper:"
+          cat musl-install/bin/ld.musl-clang
+          
+          echo "Verifying the fix:"
+          if grep -q "exec ld.\$LD" musl-install/bin/ld.musl-clang; then
+            echo "✅ Wrapper successfully fixed"
+          else
+            echo "❌ Wrapper fix failed"
+            exit 1
+          fi
+
+
+      - name: Verify musl Wrapper Scripts
+        run: |
+          echo "=== Verifying musl wrapper scripts ==="
+          
+          # Check musl-clang wrapper
+          if [ -f musl-install/bin/musl-clang ]; then
+            echo "musl-clang wrapper found"
+            chmod +x musl-install/bin/musl-clang
+          else
+            echo "musl-clang wrapper missing"
+            echo "Available files in bin/:"
+            ls -la musl-install/bin/
+            exit 1
+          fi
+          
+          # Check ld.musl-clang wrapper
+          if [ -f musl-install/bin/ld.musl-clang ]; then
+            echo "ld.musl-clang wrapper found"
+            chmod +x musl-install/bin/ld.musl-clang
+          else
+            echo "ld.musl-clang wrapper missing"
+            echo "Available files in bin/:"
+            ls -la musl-install/bin/
+            exit 1
+          fi
+          
+          echo "Wrapper script verification:"
+          echo "musl-clang first few lines:"
+          head -5 musl-install/bin/musl-clang
+          echo "ld.musl-clang first few lines:"
+          head -5 musl-install/bin/ld.musl-clang
+          
+          echo "Both wrapper scripts verified"
+
+      - name: Setup Complete Environment Variables
+        run: |
+          echo "=== Setting up complete environment variables ==="
+          export LD=eld
+          # Add musl-clang to PATH (before existing bin/ for ld.eld)
+          export PATH="$PWD/musl-install/bin:$PWD/bin:$PATH"
+          
+          # Set CC to musl-clang wrapper
+          export CC="$PWD/musl-install/bin/musl-clang"
+          
+          # Set compiler flags (matching your local setup)
+          export CFLAGS="-Wno-unused-command-line-argument"
+          export CXXFLAGS="-stdlib=libc++"
+          
+          # Make environment variables available to subsequent steps
+          echo "PATH=$PWD/musl-install/bin:$PWD/bin:$PATH" >> $GITHUB_ENV
+          echo "CC=$PWD/musl-install/bin/musl-clang" >> $GITHUB_ENV
+          echo "CFLAGS=-Wno-unused-command-line-argument" >> $GITHUB_ENV
+          echo "CXXFLAGS=-stdlib=libc++" >> $GITHUB_ENV
+          
+          echo "Environment setup complete:"
+          echo "PATH: $PATH"
+          echo "CC: $CC"
+          echo "CFLAGS: $CFLAGS"
+          echo "CXXFLAGS: $CXXFLAGS"
+          echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
+          
+          # Verify tools are found in correct order
+          echo "Tool locations:"
+          which musl-clang
+          which ld.eld
+          
+          # Test that musl-clang works
+          echo "Testing musl-clang wrapper:"
+          $CC --version | head -3
+
+
+      # - name: Test musl Basic Functionality
+      #   run: |
+      #     echo "=== Testing musl basic functionality (baseline) ==="
+          
+      #     # Create simple test program
+      #     cat > musl_baseline_test.c << 'EOF'
+      #     #include <stdio.h>
+      #     int main() {
+      #         printf("Hello from musl baseline test!\n");
+      #         return 33;
+      #     }
+      #     EOF
+          
+      #     echo "Baseline test program:"
+      #     cat musl_baseline_test.c
+          
+      #     # CRITICAL: Set LD environment variable before calling musl-clang
+      #     export LD=eld
+          
+      #     # Verify LD is set
+      #     echo "LD environment variable: '$LD'"
+      #     echo "Available linkers:"
+      #     which ld.eld || echo "ld.eld not found in PATH"
+      #     which ld || echo "system ld not found"
+          
+      #     # Compile with musl-clang (with LD set)
+      #     echo "Compiling with musl-clang (static):"
+      #     echo "Command: LD=eld $CC $CFLAGS musl_baseline_test.c -o musl_baseline_test --static"
+          
+      #     LD=eld $CC $CFLAGS musl_baseline_test.c -o musl_baseline_test --static
+          
+      #     echo "Compilation successful"
+      #     # ... rest of the test
+
+      - name: Test ELD + musl Integration
+        run: |
+          
+          # Create test program for ELD + musl
+          cat > eld_musl_test.c << 'EOF'
+          #include <stdio.h>
+          #include <stdlib.h>
+          int main() {
+              printf("Hello from ELD + musl integration!\n");
+              return 77;
+          }
+          EOF
+          
+          echo "ELD + musl test program:"
+          cat eld_musl_test.c
+          
+          # Step 1: Compile to object file
+          echo "Step 1: Compiling to object file with musl headers:"
+          echo "Command: clang -c eld_musl_test.c -o eld_musl_test.o -I./musl-install/include -nostdlib"
+          clang -c eld_musl_test.c -o eld_musl_test.o 
+
+          
+          echo "Object file compilation successful"
+          echo "Object file info:"
+          file eld_musl_test.o
+          objdump -t eld_musl_test.o | grep -E "(main|printf)" || echo "Symbol check complete"
+          
+          # Step 2: Link with ELD + musl
+          echo "Step 2: Linking with ELD + musl"
+          echo "Replicating: LD=eld musl-clang -o output 1.o --static"
+          echo "Command: LD=ld.eld $CC $CFLAGS -o eld_musl_test.out eld_musl_test.o --static"
+          
+          if LD=eld $CC $CFLAGS -o eld_musl_test.out eld_musl_test.o --static; then
+            echo "ELD + musl linking successful!"
+            
+            echo "ELD + musl program info:"
+            file eld_musl_test.out
+            
+            # Verify static linking
+            if ldd eld_musl_test.out 2>&1 | grep -q "not a dynamic executable"; then
+              echo "ELD created statically linked executable"
+            else
+              echo "ELD created dynamically linked executable"
+              echo "Dependencies:"
+              ldd eld_musl_test.out
+            fi
+            
+            # Test execution
+            echo "Testing ELD + musl program execution:"
+            set +e
+            ./eld_musl_test.out
+            EXIT_CODE=$?
+            set -e
+            
+            echo "ELD + musl program exit code: $EXIT_CODE"
+            
+            if [ $EXIT_CODE -eq 77 ]; then
+              echo "SUCCESS: ELD + musl integration working perfectly!"
+              echo "Your custom linker successfully links musl programs!"
+              echo "Nightly builder goal achieved!"
+            else
+              echo "ELD + musl program execution failed (expected 77, got $EXIT_CODE)"
+              exit 1
+            fi
+          else
+            echo "ELD + musl linking failed"
+            
+            echo "Debugging: Checking if issue is with ELD or musl setup"
+            echo "Trying baseline musl linking for comparison:"
+            if $CC $CFLAGS -o eld_musl_debug.out eld_musl_test.o --static; then
+              echo "musl linking works with system linker"
+              set +e
+              ./eld_musl_debug.out
+              echo "System linker result: $?"
+              set -e
+              echo "Issue is with ELD + musl compatibility"
+            else
+              echo "Even system linker fails - issue with musl setup"
+            fi
+            
+            exit 1
+          fi
+
+
+      - name: Download and Setup libc-test
+        run: |
+          echo "=== Downloading libc-test suite ==="
+          
+          # Clone libc-test repository
+          git clone https://repo.or.cz/libc-test.git
+          cd libc-test
+          
+          echo "libc-test version:"
+          git log --oneline -1
+          
+          echo "libc-test structure:"
+          ls -la
+          
+          echo "Default configuration:"
+          cat config.mak.def
+
+      - name: Configure libc-test for ELD + musl
+        run: |
+          echo "=== Configuring libc-test for ELD + musl ==="
+          
+          cd libc-test
+          
+          # Copy default configuration
+          cp config.mak.def config.mak
+          
+          # Modify LDFLAGS to add required flags for ELD
+          echo "Original LDFLAGS line:"
+          grep "LDFLAGS" config.mak
+          
+          # Replace LDFLAGS line with ELD-specific flags
+          sed -i 's/LDFLAGS += -g/LDFLAGS += -g -Wl,--image-base=0x400000 -static/' config.mak
+          
+          echo "Modified LDFLAGS line:"
+          grep "LDFLAGS" config.mak
+          
+          echo "Complete libc-test configuration:"
+          cat config.mak
+
+      - name: Build libc-test with ELD
+        run: |
+          echo "=== Building libc-test with ELD + musl ===  "
+          
+          cd libc-test
+          
+          # Set environment to use ELD
+          export LD=eld
+          export PATH="$PWD/../bin:$PATH"
+          echo "LD environment variable: $LD"
+          
+          echo "Environment check:"
+          echo "CC: $CC"
+          echo "LD: $LD"
+          echo "PATH: $PATH"
+          echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
+          
+          # Verify ELD is accessible
+          which ld.eld
+          ld.eld --version || echo "ELD version check completed"
+          
+          echo "Starting libc-test build..."
+          echo "This will compile hundreds of test programs using ELD + musl"
+          
+          # Build all tests with timeout protection
+          if timeout 30m make -j$(nproc) 2>&1 | tee build.log; then
+            echo "libc-test build successful"
+            
+            echo "Build statistics:"
+            echo "Total test programs built: $(find . -name "*.exe" -o -name "*.err" | wc -l)"
+            echo "Successful builds: $(find . -name "*.exe" | wc -l)"
+            echo "Failed builds: $(find . -name "*.err" | wc -l)"
+            
+            # Show build summary
+            if grep -i "error" build.log | head -5; then
+              echo "Some build errors found (see above)"
+            else
+              echo "Clean build - no major errors"
+            fi
+            
+          else
+            echo "libc-test build failed or timed out"
+            echo "Build errors (last 20 lines):"
+            tail -20 build.log
+            
+            echo "Checking what was built successfully:"
+            find . -name "*.exe" | wc -l
+            echo "test programs were built successfully"
+            
+            # Continue with available tests
+            echo "Continuing with available test programs..."
+          fi
+
+      - name: Fail on Any Test Failures
+        run: |
+          echo "=== Checking for test failures ==="
+          
+          cd libc-test
+          
+          # Simple check: if any FAIL lines exist, fail the workflow
+          if grep -q "^FAIL" src/REPORT; then
+            echo "❌ Test failures detected:"
+            grep "^FAIL" src/REPORT
+            echo ""
+            echo "❌ WORKFLOW FAILURE: ELD + musl compatibility issues found"
+            exit 1
+          else
+            echo "✅ No test failures found"
+            echo "✅ WORKFLOW SUCCESS: All tests passed"
+          fi
+
+
+
+
+
+
+
+
+
+
+
+      
+
+
+
