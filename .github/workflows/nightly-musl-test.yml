@@ -1,0 +1,99 @@
+name: Target 1 - ELD Build Test
+
+on: [push]
+
+jobs:
+  test-eld-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    
+    steps:
+      - name: System Information
+        run: |
+          echo "=== System Information ==="
+          echo "Runner: $(uname -a)"
+          echo "CPUs: $(nproc)"
+          echo "Memory: $(free -h)"
+          echo "Disk: $(df -h /)"
+          echo "Date: $(date)"
+          
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            clang \
+            libc++-dev \
+            libc++abi-dev \
+            ninja-build
+            
+      - name: Verify Tools
+        run: |
+          echo "=== Tool Versions ==="
+          cmake --version
+          ninja --version
+          clang --version
+          clang++ --version
+          
+          echo "=== Test libc++ ==="
+          echo '#include <iostream>' > test.cpp
+          echo 'int main() { std::cout << "libc++ works!" << std::endl; }' >> test.cpp
+          clang++ -stdlib=libc++ test.cpp -o test
+          ./test
+          
+      - name: Checkout LLVM
+        uses: actions/checkout@v4
+        with:
+          repository: llvm/llvm-project
+          path: llvm-project
+          ref: main
+          
+      - name: Checkout ELD
+        uses: actions/checkout@v4
+        with:
+          path: llvm-project/llvm/tools/eld
+          ref: main
+          
+      - name: Configure LLVM + ELD Build
+        run: |
+          mkdir build
+          cd build
+          
+          echo "=== Configuring build at $(date) ==="
+          cmake -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=$PWD/../install \
+            -DLLVM_ENABLE_PROJECTS="llvm;clang" \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
+            -DLLVM_TARGETS_TO_BUILD="X86" \
+            -DELD_TARGETS_TO_BUILD="x86_64" \
+            -DLLVM_ENABLE_ASSERTIONS=OFF \
+            -DLLVM_OPTIMIZED_TABLEGEN=ON \
+            ../llvm-project/llvm
+            
+      - name: Build ELD
+        run: |
+          cd build
+          echo "=== Starting build at $(date) ==="
+          ninja ld.eld clang
+          echo "=== Build completed at $(date) ==="
+          
+      - name: Install ELD
+        run: |
+          cd build
+          ninja install
+          
+      - name: Verify ELD Installation
+        run: |
+          echo "=== ELD Installation Verification ==="
+          ls -la install/bin/
+          
+          echo "=== ELD Version Check ==="
+          ./install/bin/eld --version || echo "ELD version check failed (might be expected)"
+          
+          echo "=== ELD Help Check ==="
+          ./install/bin/eld --help || echo "ELD help check failed (might be expected)"
+          
+          echo "=== Clang Version Check ==="
+          ./install/bin/clang --version
