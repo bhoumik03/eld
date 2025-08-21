@@ -9,22 +9,84 @@ jobs:
   test-eld-external:
     runs-on: ubuntu-latest
     
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          ref: nightly-musl-test2
+    # steps:
+    #   - name: Checkout Repository
+    #     uses: actions/checkout@v4
+    #     with:
+    #       ref: nightly-musl-test2
           
+    #   - name: Set up Clang 20
+    #     uses: egor-tensin/setup-clang@v1
+    #     with:
+    #       version: "20"
+    #       platform: x64
+
+    #   - name: Install libc++ and libc++abi
+    #     run: |
+    #       sudo apt update
+    #       sudo apt install -y clang libc++-dev libc++abi-dev ccache libclang-rt-20-dev
+
+    #   - name: Verify Build Environment
+    #     run: |
+    #       echo "=== Build Environment Verification ==="
+    #       echo "clang version:"
+    #       clang --version
+    #       echo "clang++ version:"
+    #       clang++ -stdlib=libc++ --version
+          
+    #       echo "Testing libc++ availability:"
+    #       echo '#include <iostream>' > test.cpp
+    #       echo 'int main() { std::cout << "libc++ works!" << std::endl; return 0; }' >> test.cpp
+    #       clang++ -std=c++17 -stdlib=libc++ test.cpp -o test_clang
+    #       ./test_clang
+
+    #   - name: Download ELD Binaries
+    #     run: |
+    #       echo "=== Downloading ELD binaries from GitHub release ===  "
+          
+    #       # Create directory structure
+    #       mkdir -p bin lib
+          
+    #       # Download from your release
+    #       RELEASE_URL="https://github.com/bhoumik03/eld/releases/download/eld_bin"
+          
+    #       echo "Downloading ld.eld..."
+    #       wget "$RELEASE_URL/ld.eld" -O bin/ld.eld
+          
+    #       echo "Downloading libLW.so.4..."
+    #       wget "$RELEASE_URL/libLW.so.4" -O lib/libLW.so.4
+          
+    #       # Set permissions
+    #       chmod +x bin/ld.eld
+    #       chmod +x lib/libLW.so.4
+          
+    #       # Set library path
+    #       export LD_LIBRARY_PATH=$PWD/lib:$LD_LIBRARY_PATH
+    #       echo "LD_LIBRARY_PATH=$PWD/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          
+    #       echo "Download complete:"
+    #       ls -lh bin/ld.eld
+    #       ls -lh lib/libLW.so.4
+          
+    steps:
       - name: Set up Clang 20
         uses: egor-tensin/setup-clang@v1
         with:
           version: "20"
           platform: x64
 
-      - name: Install libc++ and libc++abi
+      - name: Install Build Dependencies
         run: |
           sudo apt update
-          sudo apt install -y clang libc++-dev libc++abi-dev ccache libclang-rt-20-dev
+          sudo apt install -y \
+            clang \
+            libc++-dev \
+            libc++abi-dev \
+            ccache \
+            libclang-rt-20-dev \
+            cmake \
+            ninja-build \
+            make
 
       - name: Verify Build Environment
         run: |
@@ -39,35 +101,107 @@ jobs:
           echo 'int main() { std::cout << "libc++ works!" << std::endl; return 0; }' >> test.cpp
           clang++ -std=c++17 -stdlib=libc++ test.cpp -o test_clang
           ./test_clang
-
-      - name: Download ELD Binaries
-        run: |
-          echo "=== Downloading ELD binaries from GitHub release ===  "
           
-          # Create directory structure
+          echo "Build tools:"
+          cmake --version
+          ninja --version
+
+      - name: System Information
+        run: |
+          echo "=== System Information ==="
+          echo "Number of CPUs:"
+          nproc --all
+          echo "Memory information:"
+          free -h
+
+      - name: Checkout LLVM Project
+        uses: actions/checkout@v4
+        with:
+          repository: llvm/llvm-project
+          path: llvm-project
+          ref: main
+
+      - name: Checkout ELD
+        uses: actions/checkout@v4
+        with:
+          path: llvm-project/llvm/tools/eld
+          ref: nightly-musl-test2  
+
+      - name: Configure ELD Build
+        run: |
+          echo "=== Configuring ELD build ==="
+          mkdir -p obj
+          cd obj
+          
+          cmake -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_ENABLE_PROJECTS="llvm;clang;clang-tools-extra" \
+            -DCMAKE_C_COMPILER=`which clang` \
+            -DCMAKE_CXX_COMPILER=`which clang++` \
+            -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
+            -DLLVM_TARGETS_TO_BUILD="X86" \
+            -DLLVM_CCACHE_BUILD=ON \
+            -DLLVM_CCACHE_DIR=$PWD/ccache/ \
+            -DELD_TARGETS_TO_BUILD='x86_64' \
+            -DLLVM_ENABLE_SPHINX=OFF \
+            ../llvm-project/llvm
+            
+          echo "CMake configuration completed"
+
+      - name: Build ELD
+        run: |
+          echo "=== Building ELD ==="
+          cd obj
+          
+          # Build ELD with multiple cores
+          ninja -j$(nproc) ld.eld
+          
+          echo "ELD build completed"
+          echo "ELD binary location:"
+          ls -la bin/ld.eld
+          
+          # Check if libLW.so.4 exists
+          if [ -f lib/libLW.so.4 ]; then
+            echo "libLW.so.4 found:"
+            ls -la lib/libLW.so.4
+          else
+            echo "libLW.so.4 not found, checking for other LW libraries:"
+            find lib/ -name "*LW*" -o -name "*lw*" || echo "No LW libraries found"
+          fi
+
+      - name: Setup ELD Environment
+        run: |
+          echo "=== Setting up ELD environment ==="
+          
+          # Create bin directory structure (matching the download approach)
           mkdir -p bin lib
           
-          # Download from your release
-          RELEASE_URL="https://github.com/bhoumik03/eld/releases/download/eld_bin"
+          # Copy ELD binary
+          cp obj/bin/ld.eld bin/
           
-          echo "Downloading ld.eld..."
-          wget "$RELEASE_URL/ld.eld" -O bin/ld.eld
-          
-          echo "Downloading libLW.so.4..."
-          wget "$RELEASE_URL/libLW.so.4" -O lib/libLW.so.4
+          # Copy shared library if it exists
+          if [ -f obj/lib/libLW.so.4 ]; then
+            cp obj/lib/libLW.so.4 lib/
+          elif [ -f obj/lib/libLW.so ]; then
+            cp obj/lib/libLW.so lib/libLW.so.4
+          fi
           
           # Set permissions
           chmod +x bin/ld.eld
-          chmod +x lib/libLW.so.4
+          if [ -f lib/libLW.so.4 ]; then
+            chmod +x lib/libLW.so.4
+          fi
           
           # Set library path
           export LD_LIBRARY_PATH=$PWD/lib:$LD_LIBRARY_PATH
           echo "LD_LIBRARY_PATH=$PWD/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
           
-          echo "Download complete:"
+          echo "ELD environment setup complete:"
           ls -lh bin/ld.eld
-          ls -lh lib/libLW.so.4
-          
+          if [ -f lib/libLW.so.4 ]; then
+            ls -lh lib/libLW.so.4
+          fi
+
       - name: Verify ELD Setup
         run: |
           echo "=== Verifying ELD setup ==="
@@ -493,14 +627,14 @@ jobs:
           
           # Simple check: if any FAIL lines exist, fail the workflow
           if grep -q "^FAIL" src/REPORT; then
-            echo "❌ Test failures detected:"
+            echo "Test failures detected:"
             grep "^FAIL" src/REPORT
             echo ""
-            echo "❌ WORKFLOW FAILURE: ELD + musl compatibility issues found"
+            echo "WORKFLOW FAILURE: ELD + musl compatibility issues found"
             exit 1
           else
-            echo "✅ No test failures found"
-            echo "✅ WORKFLOW SUCCESS: All tests passed"
+            echo "No test failures found"
+            echo "WORKFLOW SUCCESS: All tests passed"
           fi
 
 
