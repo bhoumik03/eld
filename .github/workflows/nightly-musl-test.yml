@@ -10,11 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          ref: nightly-musl-test2
-          
+
       - name: Set up Clang 20
         uses: egor-tensin/setup-clang@v1
         with:
@@ -24,11 +20,10 @@ jobs:
       - name: Install libc++ and libc++abi
         run: |
           sudo apt update
-          sudo apt install -y clang libc++-dev libc++abi-dev ccache libclang-rt-20-dev
+          sudo apt install -y clang libc++-dev libc++abi-dev ccache libclang-rt-20-dev cmake ninja-build make
 
       - name: Verify Build Environment
         run: |
-          echo "=== Build Environment Verification ==="
           echo "clang version:"
           clang --version
           echo "clang++ version:"
@@ -40,21 +35,106 @@ jobs:
           clang++ -std=c++17 -stdlib=libc++ test.cpp -o test_clang
           ./test_clang
 
-      - name: Download ELD Binaries
-        run: |
-          echo "=== Downloading ELD binaries from GitHub release ===  "
+          echo "Build tools:"
+          cmake --version
+          ninja --version
+
+      - name: Checkout ELD
+        uses: actions/checkout@v4
+        with: 
+          ref: nightly-musl-test2
+
+      # - name: Download ELD Binaries
+      #   run: |          
+      #     # Create directory structure
+      #     mkdir -p bin lib
           
-          # Create directory structure
+      #     # Download from your release
+      #     RELEASE_URL="https://github.com/bhoumik03/eld/releases/download/eld_bin"
+          
+      #     echo "Downloading ld.eld..."
+      #     wget "$RELEASE_URL/ld.eld" -O bin/ld.eld
+          
+      #     echo "Downloading libLW.so.4..."
+      #     wget "$RELEASE_URL/libLW.so.4" -O lib/libLW.so.4
+          
+      #     # Set permissions
+      #     chmod +x bin/ld.eld
+      #     chmod +x lib/libLW.so.4
+          
+      #     # Set library path
+      #     export LD_LIBRARY_PATH=$PWD/lib:$LD_LIBRARY_PATH
+      #     echo "LD_LIBRARY_PATH=$PWD/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          
+      #     echo "Download complete:"
+      #     ls -lh bin/ld.eld
+      #     ls -lh lib/libLW.so.4
+
+
+      - name: Checkout LLVM Project
+        uses: actions/checkout@v4
+        with:
+          repository: llvm/llvm-project
+          path: llvm-project
+          ref: main
+
+      - name: Checkout ELD
+        uses: actions/checkout@v4
+        with:
+          path: llvm-project/llvm/tools/eld
+          ref: nightly-musl-test2  
+
+      - name: Configure ELD Build
+        run: |
+          mkdir -p obj
+          cd obj
+          
+          cmake -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_ENABLE_PROJECTS="llvm;clang;clang-tools-extra" \
+            -DCMAKE_C_COMPILER=`which clang` \
+            -DCMAKE_CXX_COMPILER=`which clang++` \
+            -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
+            -DLLVM_TARGETS_TO_BUILD="X86" \
+            -DLLVM_CCACHE_BUILD=ON \
+            -DLLVM_CCACHE_DIR=$PWD/ccache/ \
+            -DELD_TARGETS_TO_BUILD='x86_64' \
+            -DLLVM_ENABLE_SPHINX=OFF \
+            ../llvm-project/llvm
+            
+          echo "CMake configuration completed"
+
+      - name: Build ELD
+        run: |
+          cd obj
+          
+          ninja -j$(nproc) ld.eld
+          
+          echo "ELD build completed"
+          echo "ELD binary location:"
+          ls -la bin/ld.eld
+          
+          # Check if libLW.so.4 exists
+          # if [ -f lib/libLW.so.4 ]; then
+          #   echo "libLW.so.4 found:"
+          #   ls -la lib/libLW.so.4
+          # else
+          #   echo "libLW.so.4 not found, checking for other LW libraries:"
+          #   find lib/ -name "*LW*" -o -name "*lw*" || echo "No LW libraries found"
+          # fi
+
+      - name: Setup ELD Environment
+        run: |          
           mkdir -p bin lib
           
-          # Download from your release
-          RELEASE_URL="https://github.com/bhoumik03/eld/releases/download/eld_bin"
+          cp obj/bin/ld.eld bin/
           
-          echo "Downloading ld.eld..."
-          wget "$RELEASE_URL/ld.eld" -O bin/ld.eld
-          
-          echo "Downloading libLW.so.4..."
-          wget "$RELEASE_URL/libLW.so.4" -O lib/libLW.so.4
+          # Copy shared library if it exists
+          #if [ -f obj/lib/libLW.so.4 ]; then
+          cp obj/lib/libLW.so.4 lib/
+          # elif [ -f obj/lib/libLW.so ]; then
+          #   cp obj/lib/libLW.so lib/libLW.so.4
+          # fi
           
           # Set permissions
           chmod +x bin/ld.eld
@@ -64,157 +144,22 @@ jobs:
           export LD_LIBRARY_PATH=$PWD/lib:$LD_LIBRARY_PATH
           echo "LD_LIBRARY_PATH=$PWD/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
           
-          echo "Download complete:"
+          echo "ELD environment setup complete:"
           ls -lh bin/ld.eld
+
           ls -lh lib/libLW.so.4
-          
-    # steps:
-    #   - name: Set up Clang 20
-    #     uses: egor-tensin/setup-clang@v1
-    #     with:
-    #       version: "20"
-    #       platform: x64
 
-    #   - name: Install Build Dependencies
-    #     run: |
-    #       sudo apt update
-    #       sudo apt install -y \
-    #         clang \
-    #         libc++-dev \
-    #         libc++abi-dev \
-    #         ccache \
-    #         libclang-rt-20-dev \
-    #         cmake \
-    #         ninja-build \
-    #         make
-
-    #   - name: Verify Build Environment
-    #     run: |
-    #       echo "=== Build Environment Verification ==="
-    #       echo "clang version:"
-    #       clang --version
-    #       echo "clang++ version:"
-    #       clang++ -stdlib=libc++ --version
+      - name: Verify ELD Setup
+        run: |
           
-    #       echo "Testing libc++ availability:"
-    #       echo '#include <iostream>' > test.cpp
-    #       echo 'int main() { std::cout << "libc++ works!" << std::endl; return 0; }' >> test.cpp
-    #       clang++ -std=c++17 -stdlib=libc++ test.cpp -o test_clang
-    #       ./test_clang
+          echo "ELD dependencies:"
+          ldd bin/ld.eld
           
-    #       echo "Build tools:"
-    #       cmake --version
-    #       ninja --version
-
-    #   - name: System Information
-    #     run: |
-    #       echo "=== System Information ==="
-    #       echo "Number of CPUs:"
-    #       nproc --all
-    #       echo "Memory information:"
-    #       free -h
-
-    #   - name: Checkout LLVM Project
-    #     uses: actions/checkout@v4
-    #     with:
-    #       repository: llvm/llvm-project
-    #       path: llvm-project
-    #       ref: main
-
-    #   - name: Checkout ELD
-    #     uses: actions/checkout@v4
-    #     with:
-    #       path: llvm-project/llvm/tools/eld
-    #       ref: nightly-musl-test2  
-
-    #   - name: Configure ELD Build
-    #     run: |
-    #       echo "=== Configuring ELD build ==="
-    #       mkdir -p obj
-    #       cd obj
-          
-    #       cmake -G Ninja \
-    #         -DCMAKE_BUILD_TYPE=Release \
-    #         -DLLVM_ENABLE_PROJECTS="llvm;clang;clang-tools-extra" \
-    #         -DCMAKE_C_COMPILER=`which clang` \
-    #         -DCMAKE_CXX_COMPILER=`which clang++` \
-    #         -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
-    #         -DLLVM_TARGETS_TO_BUILD="X86" \
-    #         -DLLVM_CCACHE_BUILD=ON \
-    #         -DLLVM_CCACHE_DIR=$PWD/ccache/ \
-    #         -DELD_TARGETS_TO_BUILD='x86_64' \
-    #         -DLLVM_ENABLE_SPHINX=OFF \
-    #         ../llvm-project/llvm
-            
-    #       echo "CMake configuration completed"
-
-    #   - name: Build ELD
-    #     run: |
-    #       echo "=== Building ELD ==="
-    #       cd obj
-          
-    #       # Build ELD with multiple cores
-    #       ninja -j$(nproc) ld.eld
-          
-    #       echo "ELD build completed"
-    #       echo "ELD binary location:"
-    #       ls -la bin/ld.eld
-          
-    #       # Check if libLW.so.4 exists
-    #       if [ -f lib/libLW.so.4 ]; then
-    #         echo "libLW.so.4 found:"
-    #         ls -la lib/libLW.so.4
-    #       else
-    #         echo "libLW.so.4 not found, checking for other LW libraries:"
-    #         find lib/ -name "*LW*" -o -name "*lw*" || echo "No LW libraries found"
-    #       fi
-
-      # - name: Setup ELD Environment
-      #   run: |
-      #     echo "=== Setting up ELD environment ==="
-          
-      #     # Create bin directory structure (matching the download approach)
-      #     mkdir -p bin lib
-          
-      #     # Copy ELD binary
-      #     cp obj/bin/ld.eld bin/
-          
-      #     # Copy shared library if it exists
-      #     if [ -f obj/lib/libLW.so.4 ]; then
-      #       cp obj/lib/libLW.so.4 lib/
-      #     elif [ -f obj/lib/libLW.so ]; then
-      #       cp obj/lib/libLW.so lib/libLW.so.4
-      #     fi
-          
-      #     # Set permissions
-      #     chmod +x bin/ld.eld
-      #     if [ -f lib/libLW.so.4 ]; then
-      #       chmod +x lib/libLW.so.4
-      #     fi
-          
-      #     # Set library path
-      #     export LD_LIBRARY_PATH=$PWD/lib:$LD_LIBRARY_PATH
-      #     echo "LD_LIBRARY_PATH=$PWD/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
-          
-      #     echo "ELD environment setup complete:"
-      #     ls -lh bin/ld.eld
-      #     if [ -f lib/libLW.so.4 ]; then
-      #       ls -lh lib/libLW.so.4
-      #     fi
-
-      # - name: Verify ELD Setup
-      #   run: |
-      #     echo "=== Verifying ELD setup ==="
-          
-      #     echo "ELD dependencies:"
-      #     ldd bin/ld.eld
-          
-      #     echo "Testing ELD execution:"
-      #     ./bin/ld.eld --help 2>&1 | head -5 || echo "Help command completed"
+          echo "Testing ELD execution:"
+          ./bin/ld.eld --help 2>&1 | head -5 || echo "Help command completed"
           
       - name: Test ELD Linking
         run: |
-          echo "=== Testing ELD linking ==="
           
           cat > test.c << 'EOF'
           void _start() {
@@ -245,10 +190,10 @@ jobs:
             ls -la test.out
             
             echo "Testing program execution:"
-            set +e  # Disable exit on error temporarily
+            set +e  
             ./test.out
             EXIT_CODE=$?
-            set -e  # Re-enable exit on error
+            set -e 
             
             echo "Program exit code: $EXIT_CODE"
             
@@ -264,26 +209,8 @@ jobs:
             exit 1
           fi
           
-      - name: Success Summary
-        run: |
-          echo "=== SUCCESS SUMMARY ==="
-          echo "External binary download: OK"
-          echo "ELD setup: OK"
-          echo "ELD linking: OK"
-          echo "Program execution: OK"
-          echo ""
-          echo "Binaries used:"
-          echo "- ld.eld: $(du -h bin/ld.eld | cut -f1)"
-          echo "- libLW.so.4: $(du -h lib/libLW.so.4 | cut -f1)"
-
-            # ... (your existing successful ELD test)
-
       - name: Download and Build musl
         run: |
-          echo "=== Downloading and building musl ==="
-          
-          # Install additional build dependencies
-          sudo apt install -y make
           
           # Clone musl from GitHub
           git clone https://github.com/bminor/musl.git
@@ -292,18 +219,17 @@ jobs:
           echo "musl version:"
           git log --oneline -1
           
-          # Configure musl with clang (KEY: specify CC and CXX)
+          # Configure musl with clang 
           CC=clang CXX=clang++ ./configure --prefix=$PWD/../musl-install
           
           echo "=== Configuration complete, checking config.mak ==="
           cat config.mak | grep -E "CC|CXX"
           
           echo "=== Building musl ==="
-          # Build musl with parallel jobs
           make -j$(nproc)
           
           echo "=== Installing musl ==="
-          # Install musl (creates bin/, lib/, include/ and wrapper scripts)
+          # Install musl 
           make install
           
           cd ..
@@ -323,7 +249,7 @@ jobs:
           echo "Original ld.musl-clang wrapper:"
           cat musl-install/bin/ld.musl-clang
           
-          # Replace the exec line that uses $cc -print-prog-name=ld with ld.$LD
+          # Replacing the exec line that uses $cc -print-prog-name=ld with ld.$LD
           sed -i 's/exec \$(\$cc -print-prog-name=ld)/exec ld.$LD/' musl-install/bin/ld.musl-clang
           
           echo "Fixed ld.musl-clang wrapper:"
@@ -331,9 +257,9 @@ jobs:
           
           echo "Verifying the fix:"
           if grep -q "exec ld.\$LD" musl-install/bin/ld.musl-clang; then
-            echo "✅ Wrapper successfully fixed"
+            echo "Wrapper successfully fixed"
           else
-            echo "❌ Wrapper fix failed"
+            echo "Wrapper fix failed"
             exit 1
           fi
 
@@ -526,7 +452,6 @@ jobs:
             exit 1
           fi
 
-
       - name: Download and Setup libc-test
         run: |
           echo "=== Downloading libc-test suite ==="
@@ -566,10 +491,8 @@ jobs:
           echo "Complete libc-test configuration:"
           cat config.mak
 
-      - name: Build libc-test with ELD
-        run: |
-          echo "=== Building libc-test with ELD + musl ===  "
-          
+      - name: Build and test libc-test with ELD + musl
+        run: |          
           cd libc-test
           
           # Set environment to use ELD
@@ -588,10 +511,8 @@ jobs:
           ld.eld --version || echo "ELD version check completed"
           
           echo "Starting libc-test build..."
-          echo "This will compile hundreds of test programs using ELD + musl"
           
-          # Build all tests with timeout protection
-          if timeout 30m make -j$(nproc) 2>&1 | tee build.log; then
+          if make -j$(nproc) 2>&1 | tee build.log; then
             echo "libc-test build successful"
             
             echo "Build statistics:"
@@ -620,13 +541,8 @@ jobs:
           fi
 
       - name: Check for Unexpected Test Failures
-        run: |
-          echo "=== Checking for unexpected test failures ==="
-          
-          # Make script executable
+        run: |  
           chmod +x .github/scripts/check-test-results.sh
-          
-          # Run the test checker script
           .github/scripts/check-test-results.sh libc-test
 
 
