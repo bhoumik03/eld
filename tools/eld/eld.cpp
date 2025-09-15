@@ -57,7 +57,7 @@ maybeExpandResponseFiles(llvm::ArrayRef<const char *> args,
 /// Universal linker main().
 int main(int Argc, const char **Argv) {
   // Standard set up, so program fails gracefully.
-  llvm::errs() << "latest build 2\n";
+  llvm::errs() << "latest build 3\n";
   llvm::BumpPtrAllocator Alloc;
   sys::PrintStackTraceOnErrorSignal(Argv[0]);
   PrettyStackTraceProgram StackPrinter(Argc, Argv);

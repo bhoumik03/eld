@@ -60,6 +60,8 @@ public:
 
   void doCreateProgramHdrs() override { return; }
 
+  bool finalizeScanRelocations() override;
+
   Stub *getBranchIslandStub(Relocation *pReloc,
                             int64_t pTargetValue) const override {
     return nullptr;
@@ -91,8 +93,9 @@ public:
 
   void doPreLayout() override;
 
-
 private:
+  void defineGOTSymbol(Fragment &F);
+
   /// getRelEntrySize - the size in BYTE of rela type relocation
   size_t getRelEntrySize() override { return 0; }
 

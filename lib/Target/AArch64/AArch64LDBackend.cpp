@@ -777,6 +777,13 @@ AArch64GOT *AArch64GNUInfoLDBackend::findEntryInGOT(ResolveInfo *I) const {
 AArch64PLT *AArch64GNUInfoLDBackend::createPLT(ELFObjectFile *Obj,
                                                ResolveInfo *R,
                                                bool isIRelative) {
+  printf("[DEBUG AArch64] createPLT called for symbol: %s\n", R->name());
+  printf("[DEBUG AArch64] R->isDefine(): %s\n", R->isDefine() ? "YES" : "NO");
+  printf("[DEBUG AArch64] R->isUndef(): %s\n", R->isUndef() ? "YES" : "NO");
+  printf("[DEBUG AArch64] R->isDyn(): %s\n", R->isDyn() ? "YES" : "NO");
+  printf("[DEBUG AArch64] R->isPreemptible(): %s\n",
+         isSymbolPreemptible(*R) ? "YES" : "NO");
+
   // If there is no entries GOTPLT and PLT, we dont have a PLT0.
   if (R != nullptr && ((config().options().isSymbolTracingRequested() &&
                         config().options().traceSymbol(*R)) ||

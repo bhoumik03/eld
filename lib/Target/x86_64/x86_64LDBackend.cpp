@@ -31,7 +31,7 @@ using namespace llvm;
 // x86_64LDBackend
 //===----------------------------------------------------------------------===//
 x86_64LDBackend::x86_64LDBackend(Module &pModule, x86_64Info *pInfo)
-    : GNULDBackend(pModule, pInfo), m_pRelocator(nullptr),
+    : GNULDBackend(pModule, pInfo), m_pRelocator(nullptr), m_pDynamic(nullptr),
       m_pEndOfImage(nullptr) {}
 
 x86_64LDBackend::~x86_64LDBackend() {}
@@ -91,6 +91,52 @@ void x86_64LDBackend::initTargetSymbols() {
           FragmentRef::null());
   if (m_pEndOfImage)
     m_pEndOfImage->setShouldIgnore(false);
+
+  auto SymbolName = "_GLOBAL_OFFSET_TABLE_";
+  m_pGOTSymbol =
+      m_Module.getIRBuilder()
+          ->addSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+              m_Module.getInternalInput(Module::Script), SymbolName,
+              ResolveInfo::Object, ResolveInfo::Define, ResolveInfo::Local, 0x0,
+              0x0, FragmentRef::null(), ResolveInfo::Hidden);
+  if (m_Module.getConfig().options().isSymbolTracingRequested() &&
+      m_Module.getConfig().options().traceSymbol(SymbolName))
+    config().raise(Diag::target_specific_symbol) << SymbolName;
+  if (m_pGOTSymbol)
+    m_pGOTSymbol->setShouldIgnore(false);
+}
+
+void x86_64LDBackend::defineGOTSymbol(Fragment &pFrag) {
+  auto SymbolName = "_GLOBAL_OFFSET_TABLE_";
+  if (m_pGOTSymbol != nullptr) {
+    m_pGOTSymbol =
+        m_Module.getIRBuilder()
+            ->addSymbol<IRBuilder::Force, IRBuilder::Unresolve>(
+                pFrag.getOwningSection()->getInputFile(), SymbolName,
+                ResolveInfo::Object, ResolveInfo::Define, ResolveInfo::Local,
+                0x0, 0x0, make<FragmentRef>(pFrag, 0x0), ResolveInfo::Hidden);
+  } else {
+    m_pGOTSymbol =
+        m_Module.getIRBuilder()
+            ->addSymbol<IRBuilder::Force, IRBuilder::Resolve>(
+                m_Module.getInternalInput(Module::Script), SymbolName,
+                ResolveInfo::Object, ResolveInfo::Define, ResolveInfo::Local,
+                0x0, 0x0, make<FragmentRef>(pFrag, 0x0), ResolveInfo::Hidden);
+  }
+  if (m_Module.getConfig().options().isSymbolTracingRequested() &&
+      m_Module.getConfig().options().traceSymbol(SymbolName))
+    config().raise(Diag::target_specific_symbol) << SymbolName;
+  m_pGOTSymbol->setShouldIgnore(false);
+}
+
+bool x86_64LDBackend::finalizeScanRelocations() {
+  Fragment *frag = nullptr;
+  if (auto *GOTPLT = getGOTPLT())
+    if (GOTPLT->hasSectionData())
+      frag = *GOTPLT->getFragmentList().begin();
+  if (frag)
+    defineGOTSymbol(*frag);
+  return true;
 }
 
 bool x86_64LDBackend::initBRIslandFactory() { return true; }
@@ -122,7 +168,7 @@ bool x86_64LDBackend::finalizeTargetSymbols() {
 // Create GOT entry.
 x86_64GOT *x86_64LDBackend::createGOT(GOT::GOTType T, ELFObjectFile *Obj,
                                       ResolveInfo *R) {
-
+  llvm::errs() << "createGOT\n";
   if (R != nullptr && ((config().options().isSymbolTracingRequested() &&
                         config().options().traceSymbol(*R)) ||
                        m_Module.getPrinter()->traceDynamicLinking()))
@@ -191,7 +237,44 @@ x86_64GOT *x86_64LDBackend::findEntryInGOT(ResolveInfo *I) const {
 
 // Create PLT entry.
 x86_64PLT *x86_64LDBackend::createPLT(ELFObjectFile *Obj, ResolveInfo *R) {
+  llvm::outs() << "========createPLT function call=========\n";
+  llvm::outs() << "Obj->getContents() " << Obj->getContents() << "\n";
+  llvm::outs() << "Obj name" << Obj->getInput()->getName() << "\n";
+  llvm::outs() << "getPLT" << Obj->getPLT() << "\n";
+  llvm::outs() << "getGOTPLT" << Obj->getGOTPLT() << "\n";
+  llvm::outs() << "getRelaPLT" << Obj->getRelaPLT() << "\n";
+
+  // Print ResolveInfo information
+  llvm::errs() << "[DEBUG] ResolveInfo *R: " << (R ? "NOT NULL" : "NULL")
+               << "\n";
+  if (R) {
+    llvm::errs() << "[DEBUG] R->name(): " << R->name() << "\n";
+    llvm::errs() << "[DEBUG] R->getName(): " << R->getName() << "\n";
+    llvm::errs() << "[DEBUG] R->type(): " << R->type() << "\n";
+    llvm::errs() << "[DEBUG] R->binding(): " << R->binding() << "\n";
+    llvm::errs() << "[DEBUG] R->desc(): " << R->desc() << "\n";
+    llvm::errs() << "[DEBUG] R->size(): " << R->size() << "\n";
+    llvm::errs() << "[DEBUG] R->value(): " << R->value() << "\n";
+    llvm::errs() << "[DEBUG] R->isGlobal(): " << (R->isGlobal() ? "YES" : "NO")
+                 << "\n";
+    llvm::errs() << "[DEBUG] R->isWeak(): " << (R->isWeak() ? "YES" : "NO")
+                 << "\n";
+    llvm::errs() << "[DEBUG] R->isLocal(): " << (R->isLocal() ? "YES" : "NO")
+                 << "\n";
+    llvm::errs() << "[DEBUG] R->isDefine(): " << (R->isDefine() ? "YES" : "NO")
+                 << "\n";
+    llvm::errs() << "[DEBUG] R->isUndef(): " << (R->isUndef() ? "YES" : "NO")
+                 << "\n";
+    llvm::errs() << "[DEBUG] R->isDyn(): " << (R->isDyn() ? "YES" : "NO")
+                 << "\n";
+    llvm::errs() << "[DEBUG] R->isFunc(): " << (R->isFunc() ? "YES" : "NO")
+                 << "\n";
+    llvm::errs() << "[DEBUG] R->outSymbol(): "
+                 << (R->outSymbol() ? "EXISTS" : "NULL") << "\n";
+  }
+
   bool hasNow = config().options().hasNow();
+  llvm::outs() << "hasnow" << hasNow << "\n";
   if (R != nullptr && ((config().options().isSymbolTracingRequested() &&
                         config().options().traceSymbol(*R)) ||
                        m_Module.getPrinter()->traceDynamicLinking()))
@@ -261,8 +344,6 @@ void x86_64LDBackend::doPreLayout() {
     m_Module.addOutputSection(getRelaDyn());
   }
 }
-
-
 
 x86_64ELFDynamic *x86_64LDBackend::dynamic() { return m_pDynamic; }
 

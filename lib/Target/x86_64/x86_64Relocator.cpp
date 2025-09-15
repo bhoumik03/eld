@@ -183,7 +183,9 @@ void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
     std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
     // Absolute relocation type, symbol may needs PLT entry or
     // dynamic relocation entry
-    if (rsym && rsym->type() == ResolveInfo::Function) {
+
+    if (rsym && rsym->type() == ResolveInfo::Function &&
+        m_Target.isSymbolPreemptible(*rsym)) {
       // create PLT for this symbol if it does not have.
       if (!(rsym->reserved() & ReservePLT)) {
         m_Target.createPLT(Obj, rsym);
@@ -376,6 +378,11 @@ Relocator::Result eld::relocPLT32(Relocation &pReloc, x86_64Relocator &pParent,
   uint32_t Result;
   DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
   Relocator::Address S = pReloc.symValue(pParent.module());
+  if (pReloc.symInfo()->reserved() & Relocator::ReservePLT) {
+    S = pParent.getTarget()
+            .findEntryInPLT(pReloc.symInfo())
+            ->getAddr(pParent.config().getDiagEngine());
+  }
   Relocator::DWord A = pReloc.addend();
   Relocator::DWord P = pReloc.place(pParent.module());
 
