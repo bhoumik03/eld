@@ -332,46 +332,6 @@ Relocator::Result eld::relocAbs(Relocation &pReloc, x86_64Relocator &pParent,
   return ApplyReloc(pReloc, S + A, pRelocDesc, DiagEngine, options);
 }
 
-// Relocator::Result eld::relocPCREL(Relocation &pReloc, x86_64Relocator
-// &pParent,
-//                                   RelocationDescription &pRelocDesc) {
-//   // ResolveInfo *rsym = pReloc.symInfo();
-//   std::cout << "pcrel" << std::endl;
-//   uint32_t Result;
-//   DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
-//   Relocator::Address S = pReloc.symValue(pParent.module());
-//   Relocator::DWord A = pReloc.addend();
-//   Relocator::DWord P = pReloc.place(pParent.module());
-
-//   FragmentRef *target_fragref = pReloc.targetRef();
-//   Fragment *target_frag = target_fragref->frag();
-//   ELFSection *target_sect = target_frag->getOutputELFSection();
-//   Result = S + A - P;
-//   const GeneralOptions &options = pParent.config().options();
-//   // for relocs inside non ALLOC, just apply
-//   if (!target_sect->isAlloc()) {
-//     return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
-//   }
-
-//   // FIXME PLT STUFF
-//   //  if (!rsym->isLocal()) {
-//   //    if (rsym->reserved() & Relocator::ReservePLT) {
-//   //      S =
-//   //
-//   pParent.getTarget().findEntryInPLT(rsym)->getAddr(config().getDiagEngine());
-//   //      Result = S + A - P;
-//   //      applyRel(pReloc, Result, pRelocDesc, DiagEngine);
-//   //      return Relocator::OK;
-//   //    }
-//   //  }
-
-//   return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
-// }
-
-// At the top of x86_64Relocator.cpp, add:
-#include "eld/Target/Relocator.h" // For ReservePLT constant
-
-// Fixed relocPCREL function:
 Relocator::Result eld::relocPCREL(Relocation &pReloc, x86_64Relocator &pParent,
                                   RelocationDescription &pRelocDesc) {
   llvm::errs() << "\n=== relocPCREL START ===\n";
