@@ -282,7 +282,7 @@ x86_64PLT *x86_64LDBackend::createPLT(ELFObjectFile *Obj, ResolveInfo *R) {
   // If there is no entries GOTPLT and PLT, we dont have a PLT0.
   if (!hasNow && !getPLT()->getFragmentList().size()) {
     x86_64PLT0::Create(*m_Module.getIRBuilder(),
-                       createGOT(GOT::GOTPLT0, nullptr, nullptr), getPLT(),
+                       createGOT(GOT::GOTPLT0, nullptr, nullptr), Obj->getPLT(),
                        nullptr, hasNow);
   }
   x86_64PLT *P = x86_64PLTN::Create(*m_Module.getIRBuilder(),

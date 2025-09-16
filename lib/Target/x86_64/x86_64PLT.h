@@ -35,7 +35,10 @@ class x86_64PLT : public PLT {
 public:
   x86_64PLT(PLT::PLTType T, eld::IRBuilder &I, x86_64GOT *G, ELFSection *P,
             ResolveInfo *R, uint32_t Align, uint32_t Size)
-      : PLT(T, G, P, R, Align, Size) {}
+      : PLT(T, G, P, R, Align, Size) {
+    if (P)
+      P->addFragmentAndUpdateSize(this);
+  }
 
   virtual ~x86_64PLT() {}
 
