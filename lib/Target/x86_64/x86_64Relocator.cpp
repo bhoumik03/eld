@@ -401,10 +401,7 @@ Relocator::Result eld::relocPLT32(Relocation &pReloc, x86_64Relocator &pParent,
 
   Result = S + A - P;
   const GeneralOptions &options = pParent.config().options();
-  // for relocs inside non ALLOC, just apply
-  if (!target_sect->isAlloc()) {
-    return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
-  }
+
   return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
 }
 

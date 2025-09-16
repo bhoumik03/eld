@@ -85,10 +85,8 @@ void x86_64LDBackend::initTargetSymbols() {
   m_pEndOfImage =
       m_Module.getIRBuilder()->addSymbol<IRBuilder::Force, IRBuilder::Resolve>(
           m_Module.getInternalInput(Module::Script), "__end",
-          ResolveInfo::NoType, ResolveInfo::Define, ResolveInfo::Absolute,
-          0x0, // size
-          0x0, // value
-          FragmentRef::null());
+          ResolveInfo::NoType, ResolveInfo::Define, ResolveInfo::Absolute, 0x0,
+          0x0, FragmentRef::null());
   if (m_pEndOfImage)
     m_pEndOfImage->setShouldIgnore(false);
 
@@ -235,7 +233,6 @@ x86_64GOT *x86_64LDBackend::findEntryInGOT(ResolveInfo *I) const {
   return Entry->second;
 }
 
-// Create PLT entry.
 x86_64PLT *x86_64LDBackend::createPLT(ELFObjectFile *Obj, ResolveInfo *R) {
   llvm::outs() << "========createPLT function call=========\n";
   llvm::outs() << "Obj->getContents() " << Obj->getContents() << "\n";
@@ -244,7 +241,6 @@ x86_64PLT *x86_64LDBackend::createPLT(ELFObjectFile *Obj, ResolveInfo *R) {
   llvm::outs() << "getGOTPLT" << Obj->getGOTPLT() << "\n";
   llvm::outs() << "getRelaPLT" << Obj->getRelaPLT() << "\n";
 
-  // Print ResolveInfo information
   llvm::errs() << "[DEBUG] ResolveInfo *R: " << (R ? "NOT NULL" : "NULL")
                << "\n";
   if (R) {
@@ -282,7 +278,7 @@ x86_64PLT *x86_64LDBackend::createPLT(ELFObjectFile *Obj, ResolveInfo *R) {
   // If there is no entries GOTPLT and PLT, we dont have a PLT0.
   if (!hasNow && !getPLT()->getFragmentList().size()) {
     x86_64PLT0::Create(*m_Module.getIRBuilder(),
-                       createGOT(GOT::GOTPLT0, nullptr, nullptr), Obj->getPLT(),
+                       createGOT(GOT::GOTPLT0, nullptr, nullptr), getPLT(),
                        nullptr, hasNow);
   }
   x86_64PLT *P = x86_64PLTN::Create(*m_Module.getIRBuilder(),
