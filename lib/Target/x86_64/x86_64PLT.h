@@ -36,8 +36,9 @@ public:
   x86_64PLT(PLT::PLTType T, eld::IRBuilder &I, x86_64GOT *G, ELFSection *P,
             ResolveInfo *R, uint32_t Align, uint32_t Size)
       : PLT(T, G, P, R, Align, Size) {
-    if (P)
+    if (P) {
       P->addFragmentAndUpdateSize(this);
+    }
   }
 
   virtual ~x86_64PLT() {}
@@ -54,6 +55,8 @@ public:
   virtual ~x86_64PLT0() {}
 
   virtual llvm::ArrayRef<uint8_t> getContent() const override {
+    llvm::outs() << "PLT0 getContent() called\n";
+    llvm::outs() << (int)x86_64_plt0[0];
     return x86_64_plt0;
   }
 
@@ -70,6 +73,7 @@ public:
   virtual ~x86_64PLTN() {}
 
   virtual llvm::ArrayRef<uint8_t> getContent() const override {
+    llvm::outs() << x86_64_plt1[0];
     return x86_64_plt1;
   }
 

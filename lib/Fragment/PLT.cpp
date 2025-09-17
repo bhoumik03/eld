@@ -4,7 +4,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 //===----------------------------------------------------------------------===//
 
-
 #include "eld/Fragment/PLT.h"
 #include "eld/Core/Module.h"
 #include "eld/SymbolResolver/ResolveInfo.h"
