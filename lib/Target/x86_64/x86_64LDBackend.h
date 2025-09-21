@@ -12,7 +12,9 @@
 #include "eld/Readers/ELFSection.h"
 #include "eld/SymbolResolver/IRBuilder.h"
 #include "eld/Target/GNULDBackend.h"
+#include "x86_64ELFDynamic.h"
 #include "x86_64PLT.h"
+#include "llvm/BinaryFormat/ELF.h"
 
 namespace eld {
 
@@ -55,9 +57,11 @@ public:
 
   uint64_t getValueForDiscardedRelocations(const Relocation *R) const override;
 
-  ELFDynamic *dynamic() override { return nullptr; }
+  x86_64ELFDynamic *dynamic() override;
 
   void doCreateProgramHdrs() override { return; }
+
+  bool finalizeScanRelocations() override;
 
   Stub *getBranchIslandStub(Relocation *pReloc,
                             int64_t pTargetValue) const override {
@@ -88,22 +92,46 @@ public:
 
   void setDefaultConfigs() override;
 
+  void doPreLayout() override;
+
+  DynRelocType getDynRelocType(const Relocation *X) const override {
+    if (X->type() == llvm::ELF::R_X86_64_GLOB_DAT)
+      return DynRelocType::GLOB_DAT;
+    if (X->type() == llvm::ELF::R_X86_64_JUMP_SLOT)
+      return DynRelocType::JMP_SLOT;
+    if (X->type() == llvm::ELF::R_X86_64_64)
+      return DynRelocType::WORD_DEPOSIT;
+    return DynRelocType::DEFAULT;
+  }
+
+  void recordRelativeReloc(Relocation *DynRel, const Relocation *OrigRel) {
+    m_RelativeRelocMap[DynRel] = OrigRel;
+  }
+
 private:
+  void defineGOTSymbol(Fragment &F);
+
   /// getRelEntrySize - the size in BYTE of rela type relocation
   size_t getRelEntrySize() override { return 0; }
 
   /// getRelaEntrySize - the size in BYTE of rela type relocation
-  size_t getRelaEntrySize() override { return 12; }
+  size_t getRelaEntrySize() override { return 24; }
 
   uint64_t maxBranchOffset() override { return 0; }
 
+  uint32_t m_RelaPLTIndex = 0;
+
 private:
   Relocator *m_pRelocator;
+
+  x86_64ELFDynamic *m_pDynamic;
 
   LDSymbol *m_pEndOfImage;
   llvm::DenseMap<ResolveInfo *, x86_64GOT *> m_GOTMap;
   llvm::DenseMap<ResolveInfo *, x86_64GOT *> m_GOTPLTMap;
   llvm::DenseMap<ResolveInfo *, x86_64PLT *> m_PLTMap;
+
+  std::map<Relocation *, const Relocation *> m_RelativeRelocMap;
 };
 } // namespace eld
 

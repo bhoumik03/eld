@@ -31,8 +31,6 @@ x86_64Relocator::Result relocGOTPCREL(Relocation &pEntry,
 x86_64Relocator::Result relocTPOFF(Relocation &pEntry, x86_64Relocator &pParent,
                                    RelocationDescription &RelocDesc);
 
-struct RelocationDescription;
-
 typedef Relocator::Result (*ApplyFunctionType)(
     eld::Relocation &pReloc, eld::x86_64Relocator &pParent,
     RelocationDescription &pRelocDesc);

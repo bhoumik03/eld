@@ -4,7 +4,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 //===----------------------------------------------------------------------===//
 
-
 #include "AArch64Relocator.h"
 #include "AArch64InsnHelpers.h"
 #include "AArch64RelocationFunctions.h"

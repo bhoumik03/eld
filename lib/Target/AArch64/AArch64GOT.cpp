@@ -15,8 +15,10 @@ using namespace eld;
 AArch64GOTPLT0 *AArch64GOTPLT0::Create(ELFSection *O, ResolveInfo *R) {
   AArch64GOTPLT0 *G = make<AArch64GOTPLT0>(O, R);
 
-  if (!R)
+  if (!R) {
+    llvm::outs() << "not R\n";
     return G;
+  }
 
   // Create a relocation and point to the ResolveInfo.
   Relocation *r1 = nullptr;

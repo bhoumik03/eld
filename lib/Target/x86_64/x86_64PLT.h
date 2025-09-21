@@ -35,9 +35,15 @@ class x86_64PLT : public PLT {
 public:
   x86_64PLT(PLT::PLTType T, eld::IRBuilder &I, x86_64GOT *G, ELFSection *P,
             ResolveInfo *R, uint32_t Align, uint32_t Size)
-      : PLT(T, G, P, R, Align, Size) {}
+      : PLT(T, G, P, R, Align, Size) {
+    if (P) {
+      // P->addFragmentAndUpdateSize(this);
+    }
+  }
 
   virtual ~x86_64PLT() {}
+
+  x86_64GOT *getGOT() const { return static_cast<x86_64GOT *>(PLT::getGOT()); }
 
   virtual llvm::ArrayRef<uint8_t> getContent() const override = 0;
 };
@@ -58,20 +64,50 @@ public:
                             ResolveInfo *R, bool HasNow);
 };
 
+// class x86_64PLTN : public x86_64PLT {
+// public:
+//   x86_64PLTN(x86_64GOT *G, eld::IRBuilder &I, ELFSection *P, ResolveInfo *R,
+//              uint32_t Align, uint32_t Size)
+//       : x86_64PLT(PLT::PLTN, I, G, P, R, Align, Size) {}
+
+//   virtual ~x86_64PLTN() {}
+
+//   virtual llvm::ArrayRef<uint8_t> getContent() const override {
+//     return x86_64_plt1;
+//   }
+
+//   static x86_64PLTN *Create(eld::IRBuilder &I, x86_64GOT *G, ELFSection *O,
+//                             ResolveInfo *R, bool HasNow);
+// };
+
 class x86_64PLTN : public x86_64PLT {
 public:
   x86_64PLTN(x86_64GOT *G, eld::IRBuilder &I, ELFSection *P, ResolveInfo *R,
              uint32_t Align, uint32_t Size)
-      : x86_64PLT(PLT::PLTN, I, G, P, R, Align, Size) {}
+      : x86_64PLT(PLT::PLTN, I, G, P, R, Align, Size), m_RelocIndex(0) {}
 
   virtual ~x86_64PLTN() {}
 
+  void setRelocIndex(uint32_t index) { m_RelocIndex = index; }
+
   virtual llvm::ArrayRef<uint8_t> getContent() const override {
-    return x86_64_plt1;
+    memcpy(m_Content, x86_64_plt1, sizeof(x86_64_plt1));
+
+    uint32_t index = m_RelocIndex;
+    m_Content[7] = index & 0xFF;
+    m_Content[8] = (index >> 8) & 0xFF;
+    m_Content[9] = (index >> 16) & 0xFF;
+    m_Content[10] = (index >> 24) & 0xFF;
+
+    return llvm::ArrayRef<uint8_t>(m_Content, sizeof(m_Content));
   }
 
   static x86_64PLTN *Create(eld::IRBuilder &I, x86_64GOT *G, ELFSection *O,
                             ResolveInfo *R, bool HasNow);
+
+private:
+  uint32_t m_RelocIndex;
+  mutable uint8_t m_Content[16];
 };
 
 } // namespace eld

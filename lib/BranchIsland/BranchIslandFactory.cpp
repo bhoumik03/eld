@@ -334,7 +334,7 @@ BranchIslandFactory::createBranchIsland(Relocation &PReloc, Stub *S,
     if (LayoutInfo && !LayoutInfo->showOnlyLayout()) {
       std::lock_guard<std::mutex> Guard(Mutex);
       LayoutInfo->recordFragment(TrampolineInput, TrampolineInputSection,
-                                    Clone);
+                                 Clone);
       LayoutInfo->recordSymbol(Clone, Symbol);
       LayoutInfo->recordTrampolines();
     }

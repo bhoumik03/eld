@@ -186,7 +186,7 @@ void GNULDBackend::insertTimingFragmentStub() {
   LayoutInfo *layoutInfo = m_Module.getLayoutInfo();
   if (layoutInfo)
     layoutInfo->recordFragment(F->getOwningSection()->getInputFile(),
-                      F->getOwningSection(), F);
+                               F->getOwningSection(), F);
   m_pTimingFragment = F;
 }
 
@@ -276,7 +276,7 @@ eld::Expected<void> GNULDBackend::initStdSections() {
 
   if (layoutInfo)
     layoutInfo->recordFragment(F->getOwningSection()->getInputFile(),
-                      F->getOwningSection(), F);
+                               F->getOwningSection(), F);
 
   return eld::Expected<void>();
 }
@@ -284,19 +284,22 @@ eld::Expected<void> GNULDBackend::initStdSections() {
 /// initStandardSymbols - define and initialize standard symbols.
 /// This function is called after section merging but before read relocations.
 bool GNULDBackend::initStandardSymbols() {
+  llvm::outs() << "initStandardSymbols called\n";
   eld::RegisterTimer T("Define and Initialize Standard Symbols",
                        "Add Default Standard Symbols",
                        m_Module.getConfig().options().printTimingStats());
   if (LinkerConfig::Object == config().codeGenType() ||
-      m_Module.getScript().linkerScriptHasSectionsCommand())
+      m_Module.getScript().linkerScriptHasSectionsCommand()) {
+    llvm::outs() << "initStandardSymbols not executed";
     return true;
-
+  }
   auto MayDefineStandardSym = [&](llvm::StringRef Symbol) {
     m_ProvideStandardSymbols[Symbol] = nullptr;
   };
 
   auto InitStandardSym = [&](llvm::StringRef A, llvm::StringRef B,
                              ELFSection *O) {
+    
     LDSymbol *SymA = nullptr;
     LDSymbol *SymB = nullptr;
     if (!A.empty()) {
@@ -327,6 +330,7 @@ bool GNULDBackend::initStandardSymbols() {
                   m_Module.getSection(".init_array"));
   InitStandardSym("__fini_array_start", "__fini_array_end",
                   m_Module.getSection(".fini_array"));
+  llvm::outs() << "init _DYNAMIC symbol\n";
   InitStandardSym("_DYNAMIC", "", m_Module.getSection(".dynamic"));
   InitStandardSym("__executable_start", "", m_Module.getSection(".text"));
   InitStandardSym("", "etext", m_Module.getSection(".text"));
@@ -387,6 +391,7 @@ void GNULDBackend::DefineStandardSymFromSegment(
 int64_t GNULDBackend::getPLTAddr(ResolveInfo *pInfo) const { return 0; }
 
 bool GNULDBackend::finalizeStandardSymbols() {
+  llvm::outs() << "finalizeStandardSymbols\n";
   eld::RegisterTimer T("Finalize Standard Symbols", "Perform Layout",
                        m_Module.getConfig().options().printTimingStats());
   if (LinkerConfig::Object == config().codeGenType() ||
@@ -848,10 +853,10 @@ void GNULDBackend::sizeDynamic() {
     if (llvm::dyn_cast<ELFFileBase>(lib)->isELFNeeded()) {
       const ELFDynObjectFile *dynObjFile = llvm::cast<ELFDynObjectFile>(lib);
       if (addedLibs.count(dynObjFile->getInput()->getMemArea()))
-          continue;
+        continue;
       addedLibs.insert(dynObjFile->getInput()->getMemArea());
-      std::size_t SONameOffset = FileFormat->addStringToDynStrTab(
-          dynObjFile->getSOName());
+      std::size_t SONameOffset =
+          FileFormat->addStringToDynStrTab(dynObjFile->getSOName());
       auto DTEntry = dynamic()->reserveNeedEntry();
       DTEntry->setValue(llvm::ELF::DT_NEEDED, SONameOffset);
     }
@@ -1087,9 +1092,11 @@ GNULDBackend::emitRegNamePools(llvm::FileOutputBuffer &pOutput) {
 
   // emit the first ELF symbol
   if (config().targets().is32Bits())
-    emitSymbol32(symtab32[0], LDSymbol::null(), strtab, 0, 0, /*IsDynSymTab=*/false);
+    emitSymbol32(symtab32[0], LDSymbol::null(), strtab, 0, 0,
+                 /*IsDynSymTab=*/false);
   else
-    emitSymbol64(symtab64[0], LDSymbol::null(), strtab, 0, 0, /*IsDynSymTab=*/false);
+    emitSymbol64(symtab64[0], LDSymbol::null(), strtab, 0, 0,
+                 /*IsDynSymTab=*/false);
 
   m_pSymIndexMap[LDSymbol::null()] = 0;
 
@@ -1106,11 +1113,11 @@ GNULDBackend::emitRegNamePools(llvm::FileOutputBuffer &pOutput) {
       continue;
     }
     if (config().targets().is32Bits())
-      emitSymbol32(symtab32[symIdx], S->outSymbol(), strtab, strtabsize,
-                   symIdx, /*IsDynSymTab=*/false);
+      emitSymbol32(symtab32[symIdx], S->outSymbol(), strtab, strtabsize, symIdx,
+                   /*IsDynSymTab=*/false);
     else
-      emitSymbol64(symtab64[symIdx], S->outSymbol(), strtab, strtabsize,
-                   symIdx, /*IsDynSymTab=*/false);
+      emitSymbol64(symtab64[symIdx], S->outSymbol(), strtab, strtabsize, symIdx,
+                   /*IsDynSymTab=*/false);
     if ((S->isGlobal() || S->isWeak()) && !firstNonLocal)
       firstNonLocal = symIdx;
     strtabsize += std::string(S->name()).size() + 1;
@@ -4115,7 +4122,7 @@ LDSymbol &GNULDBackend::defineSymbolforCopyReloc(eld::IRBuilder &pBuilder,
   copyRelocSect->addFragmentAndUpdateSize(frag);
   if (layoutInfo)
     layoutInfo->recordFragment(copyRelocSect->getInputFile(), copyRelocSect,
-                                  frag);
+                               frag);
 
   // change symbol binding to Global if it's a weak symbol
   ResolveInfo::Binding binding = (ResolveInfo::Binding)pSym->binding();
@@ -4640,7 +4647,7 @@ void GNULDBackend::makeVersionString() {
   LayoutInfo *layoutInfo = m_Module.getLayoutInfo();
   if (layoutInfo)
     layoutInfo->recordFragment(F->getOwningSection()->getInputFile(),
-                      F->getOwningSection(), F);
+                               F->getOwningSection(), F);
   // Add LLVM revision information as well if available.
   // This check is required because eld do not necessarily have access
   // to LLVM revision information.
@@ -4652,8 +4659,9 @@ void GNULDBackend::makeVersionString() {
         make<StringFragment>(LLVMRevisionInfo, m_pComment);
     m_pComment->addFragmentAndUpdateSize(LLVMRevisionF);
     if (layoutInfo)
-      layoutInfo->recordFragment(LLVMRevisionF->getOwningSection()->getInputFile(),
-                        LLVMRevisionF->getOwningSection(), LLVMRevisionF);
+      layoutInfo->recordFragment(
+          LLVMRevisionF->getOwningSection()->getInputFile(),
+          LLVMRevisionF->getOwningSection(), LLVMRevisionF);
   }
   if ((LinkerConfig::Object != config().codeGenType()) &&
       (LinkerConfig::DynObj != config().codeGenType()) &&
@@ -4672,8 +4680,9 @@ void GNULDBackend::makeVersionString() {
   Fragment *CmdLineFragment = make<StringFragment>(CommandLine, m_pComment);
   m_pComment->addFragmentAndUpdateSize(CmdLineFragment);
   if (layoutInfo)
-    layoutInfo->recordFragment(CmdLineFragment->getOwningSection()->getInputFile(),
-                      CmdLineFragment->getOwningSection(), CmdLineFragment);
+    layoutInfo->recordFragment(
+        CmdLineFragment->getOwningSection()->getInputFile(),
+        CmdLineFragment->getOwningSection(), CmdLineFragment);
 }
 
 bool GNULDBackend::addPhdrsIfNeeded(void) {

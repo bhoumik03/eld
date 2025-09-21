@@ -570,6 +570,7 @@ void ELFObjectWriter::emitRel(ELFSection *CurSection, MemoryRegion &CurRegion,
 template <typename ELFT>
 void ELFObjectWriter::emitRela(ELFSection *S, MemoryRegion &CurRegion,
                                bool isDyn) const {
+  llvm::outs() << "emitRela called\n";
   typedef typename ELFT::Rela ElfXX_Rela;
   typedef typename ELFT::Addr ElfXX_Addr;
   typedef typename ELFT::Word ElfXX_Word;
@@ -620,9 +621,12 @@ void ELFObjectWriter::emitRela(ELFSection *S, MemoryRegion &CurRegion,
     case GNULDBackend::DynRelocType::GLOB_DAT:
     case GNULDBackend::DynRelocType::TPREL_GLOBAL:
     case GNULDBackend::DynRelocType::WORD_DEPOSIT: {
+      llvm::outs() << "def\n";
       RSym = static_cast<ElfXX_Word>(
           ThisModule.getBackend().getDynSymbolIdx(R->symInfo()->outSymbol()));
-
+      llvm::outs() << "R->Type " << R->type() << "\n";
+      llvm::outs() << "RSym " << RSym << "\n";
+      llvm::outs() << "ROffset " << ROffset << "\n";
       emitRelocation<ELFT>(*Rel, R->type(), RSym, ROffset, RAddend);
       break;
     }
@@ -630,8 +634,8 @@ void ELFObjectWriter::emitRela(ELFSection *S, MemoryRegion &CurRegion,
       emitRelocation<ELFT>(
           *Rel, R->type(), 0, ROffset,
           ThisModule.getBackend().getRelocator()->getSymValue(R) + RAddend);
-      // llvm::errs() << "Writer Name : " << R->symInfo()->name() << " Addend :
-      // " << r_addend << "\n";
+      // llvm::errs() << "Writer Name : " << R->symInfo()->name() << " Addend
+      // : " << r_addend << "\n";
     } break;
 
     case GNULDBackend::DynRelocType::TLSDESC_GLOBAL:

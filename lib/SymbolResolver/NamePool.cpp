@@ -248,8 +248,12 @@ const ResolveInfo *NamePool::findInfo(std::string SymbolName) const {
 // FIXME: Pass name by const reference, or use llvm::StringRef
 LDSymbol *NamePool::findSymbol(std::string SymbolName) {
   ResolveInfo *Info = findInfo(SymbolName);
-  if (nullptr == Info)
+  // llvm::outs() << "SymbolName-" << SymbolName << "\n";
+  if (nullptr == Info) {
+    // llvm::outs() << "find Symbol returned nullptr\n";
     return nullptr;
+  }
+
   return Info->outSymbol();
 }
 

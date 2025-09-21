@@ -31,7 +31,7 @@ using namespace llvm;
 // x86_64LDBackend
 //===----------------------------------------------------------------------===//
 x86_64LDBackend::x86_64LDBackend(Module &pModule, x86_64Info *pInfo)
-    : GNULDBackend(pModule, pInfo), m_pRelocator(nullptr),
+    : GNULDBackend(pModule, pInfo), m_pRelocator(nullptr), m_pDynamic(nullptr),
       m_pEndOfImage(nullptr) {}
 
 x86_64LDBackend::~x86_64LDBackend() {}
@@ -91,6 +91,52 @@ void x86_64LDBackend::initTargetSymbols() {
           FragmentRef::null());
   if (m_pEndOfImage)
     m_pEndOfImage->setShouldIgnore(false);
+
+  auto SymbolName = "_GLOBAL_OFFSET_TABLE_";
+  m_pGOTSymbol =
+      m_Module.getIRBuilder()
+          ->addSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+              m_Module.getInternalInput(Module::Script), SymbolName,
+              ResolveInfo::Object, ResolveInfo::Define, ResolveInfo::Local, 0x0,
+              0x0, FragmentRef::null(), ResolveInfo::Hidden);
+  if (m_Module.getConfig().options().isSymbolTracingRequested() &&
+      m_Module.getConfig().options().traceSymbol(SymbolName))
+    config().raise(Diag::target_specific_symbol) << SymbolName;
+  if (m_pGOTSymbol)
+    m_pGOTSymbol->setShouldIgnore(false);
+}
+
+void x86_64LDBackend::defineGOTSymbol(Fragment &pFrag) {
+  auto SymbolName = "_GLOBAL_OFFSET_TABLE_";
+  if (m_pGOTSymbol != nullptr) {
+    m_pGOTSymbol =
+        m_Module.getIRBuilder()
+            ->addSymbol<IRBuilder::Force, IRBuilder::Unresolve>(
+                pFrag.getOwningSection()->getInputFile(), SymbolName,
+                ResolveInfo::Object, ResolveInfo::Define, ResolveInfo::Local,
+                0x0, 0x0, make<FragmentRef>(pFrag, 0x0), ResolveInfo::Hidden);
+  } else {
+    m_pGOTSymbol =
+        m_Module.getIRBuilder()
+            ->addSymbol<IRBuilder::Force, IRBuilder::Resolve>(
+                m_Module.getInternalInput(Module::Script), SymbolName,
+                ResolveInfo::Object, ResolveInfo::Define, ResolveInfo::Local,
+                0x0, 0x0, make<FragmentRef>(pFrag, 0x0), ResolveInfo::Hidden);
+  }
+  if (m_Module.getConfig().options().isSymbolTracingRequested() &&
+      m_Module.getConfig().options().traceSymbol(SymbolName))
+    config().raise(Diag::target_specific_symbol) << SymbolName;
+  m_pGOTSymbol->setShouldIgnore(false);
+}
+
+bool x86_64LDBackend::finalizeScanRelocations() {
+  Fragment *frag = nullptr;
+  if (auto *GOTPLT = getGOTPLT())
+    if (GOTPLT->hasSectionData())
+      frag = *GOTPLT->getFragmentList().begin();
+  if (frag)
+    defineGOTSymbol(*frag);
+  return true;
 }
 
 bool x86_64LDBackend::initBRIslandFactory() { return true; }
@@ -99,6 +145,7 @@ bool x86_64LDBackend::initStubFactory() { return true; }
 
 /// finalizeSymbol - finalize the symbol value
 bool x86_64LDBackend::finalizeTargetSymbols() {
+  llvm::outs() << "finalizeTargetSymbols\n";
   if (config().codeGenType() == LinkerConfig::Object)
     return true;
 
@@ -123,16 +170,22 @@ bool x86_64LDBackend::finalizeTargetSymbols() {
 x86_64GOT *x86_64LDBackend::createGOT(GOT::GOTType T, ELFObjectFile *Obj,
                                       ResolveInfo *R) {
 
+  llvm::outs() << "createGOT called\n";
   if (R != nullptr && ((config().options().isSymbolTracingRequested() &&
                         config().options().traceSymbol(*R)) ||
                        m_Module.getPrinter()->traceDynamicLinking()))
     config().raise(Diag::create_got_entry) << R->name();
   // If we are creating a GOT, always create a .got.plt.
+
   if (!getGOTPLT()->getFragmentList().size()) {
-    // TODO: This should be GOT0, not GOTPLT0.
-    LDSymbol *Dynamic = m_Module.getNamePool().findSymbol("_DYNAMIC");
-    x86_64GOTPLT0::Create(getGOTPLT(),
-                          Dynamic ? Dynamic->resolveInfo() : nullptr);
+    // llvm::outs() << "_DYNAMIC\n";
+    // // TODO: This should be GOT0, not GOTPLT0.
+    // LDSymbol *Dynamic = m_Module.getNamePool().findSymbol(".");
+    // llvm::outs() << "Dynamic " << Dynamic << "\n";
+    // x86_64GOTPLT0::Create(getGOTPLT(),
+    //                       Dynamic ? Dynamic->resolveInfo() : nullptr);
+
+    x86_64GOTPLT0::Create(getGOTPLT(), &m_Module);
   }
 
   x86_64GOT *G = nullptr;
@@ -142,10 +195,12 @@ x86_64GOT *x86_64LDBackend::createGOT(GOT::GOTType T, ELFObjectFile *Obj,
     G = x86_64GOT::Create(Obj->getGOT(), R);
     break;
   case GOT::GOTPLT0:
+    llvm::outs() << "GOTPLT0\n";
     G = llvm::dyn_cast<x86_64GOT>(*getGOTPLT()->getFragmentList().begin());
     GOT = false;
     break;
   case GOT::GOTPLTN:
+    llvm::outs() << "GOTPLTN\n";
     G = x86_64GOTPLTN::Create(Obj->getGOTPLT(), R);
     GOT = false;
     break;
@@ -201,16 +256,25 @@ x86_64PLT *x86_64LDBackend::createPLT(ELFObjectFile *Obj, ResolveInfo *R) {
     x86_64PLT0::Create(*m_Module.getIRBuilder(),
                        createGOT(GOT::GOTPLT0, nullptr, nullptr), getPLT(),
                        nullptr, hasNow);
+    m_RelaPLTIndex = 0;
   }
-  x86_64PLT *P = x86_64PLTN::Create(*m_Module.getIRBuilder(),
-                                    createGOT(GOT::GOTPLTN, Obj, R),
-                                    Obj->getPLT(), R, hasNow);
+  x86_64PLT *P =
+      x86_64PLTN::Create(*m_Module.getIRBuilder(),
+                         createGOT(GOT::GOTPLTN, Obj, R), getPLT(), R, hasNow);
   // init the corresponding rel entry in .rela.plt
+
+  if (x86_64PLTN *pltn = llvm::dyn_cast<x86_64PLTN>(P)) {
+    pltn->setRelocIndex(m_RelaPLTIndex);
+  }
+
   Relocation &rela_entry = *Obj->getRelaPLT()->createOneReloc();
   rela_entry.setType(llvm::ELF::R_X86_64_JUMP_SLOT);
   Fragment *F = P->getGOT();
   rela_entry.setTargetRef(make<FragmentRef>(*F, 0));
   rela_entry.setSymInfo(R);
+
+  m_RelaPLTIndex++;
+
   if (R)
     recordPLT(R, P);
   return P;
@@ -246,6 +310,26 @@ void x86_64LDBackend::setDefaultConfigs() {
     config().disableThreadOptions(LinkerConfig::EnableThreadsOpt::AllThreads);
   }
 }
+
+void x86_64LDBackend::doPreLayout() {
+  if ((!config().isCodeStatic() || config().options().forceDynamic()) &&
+      nullptr == m_pDynamic)
+    m_pDynamic = make<x86_64ELFDynamic>(*this, config());
+
+  if (LinkerConfig::Object != config().codeGenType()) {
+    llvm::outs() << "relaplt size "
+                 << getRelaPLT()->getRelocations().size() * getRelaEntrySize()
+                 << "\n";
+    getRelaPLT()->setSize(getRelaPLT()->getRelocations().size() *
+                          getRelaEntrySize());
+    getRelaDyn()->setSize(getRelaDyn()->getRelocations().size() *
+                          getRelaEntrySize());
+    m_Module.addOutputSection(getRelaPLT());
+    m_Module.addOutputSection(getRelaDyn());
+  }
+}
+
+x86_64ELFDynamic *x86_64LDBackend::dynamic() { return m_pDynamic; }
 
 namespace eld {
 

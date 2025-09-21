@@ -4,7 +4,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 //===----------------------------------------------------------------------===//
 
-
 #include "eld/Fragment/GOT.h"
 #include "eld/Core/Module.h"
 #include "eld/SymbolResolver/ResolveInfo.h"
@@ -24,6 +23,7 @@ void GOT::setSymInfo(ResolveInfo *PSymInfo) { ThisSymInfo = PSymInfo; }
 size_t GOT::size() const { return ThisSize; }
 
 eld::Expected<void> GOT::emit(MemoryRegion &Mr, Module &M) {
+  llvm::outs() << "GOTPLTN data" << getContent().data() << "\n";
   std::memcpy(Mr.begin() + getOffset(M.getConfig().getDiagEngine()),
               getContent().data(), size());
   return {};

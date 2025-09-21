@@ -154,6 +154,54 @@ void x86_64Relocator::scanRelocation(Relocation &pReloc,
     scanGlobalReloc(pInputFile, pReloc, pLinker, *section, CopyRelocs);
 }
 
+namespace {
+
+Relocation *helper_DynRel_init(ELFObjectFile *Obj, Relocation *R,
+                               ResolveInfo *pSym, Fragment *F, uint32_t pOffset,
+                               Relocator::Type pType, x86_64LDBackend &B) {
+  Relocation *rela_entry = Obj->getRelaDyn()->createOneReloc();
+
+  rela_entry->setType(pType);
+  rela_entry->setTargetRef(make<FragmentRef>(*F, pOffset));
+  rela_entry->setSymInfo(pSym);
+
+  if (R) {
+    rela_entry->setAddend(R->addend());
+  }
+
+  if (R && (pType == llvm::ELF::R_X86_64_RELATIVE)) {
+    B.recordRelativeReloc(rela_entry, R);
+  }
+  return rela_entry;
+}
+
+x86_64GOT &CreateGOT(ELFObjectFile *Obj, Relocation &pReloc, bool pHasRel,
+                     x86_64LDBackend &B, bool isExec) {
+  ResolveInfo *rsym = pReloc.symInfo();
+  x86_64GOT *G = B.createGOT(GOT::Regular, Obj, rsym);
+
+  if (!pHasRel) {
+    G->setValueType(GOT::SymbolValue);
+    return *G;
+  }
+
+  bool useRelative =
+      (rsym->isHidden() || (!isExec && !B.isSymbolPreemptible(*rsym)));
+
+  helper_DynRel_init(Obj, &pReloc, rsym, G, 0x0,
+                     useRelative ? llvm::ELF::R_X86_64_RELATIVE
+                                 : llvm::ELF::R_X86_64_GLOB_DAT,
+                     B);
+
+  if (useRelative) {
+    G->setValueType(GOT::SymbolValue);
+  }
+
+  return *G;
+}
+
+} // namespace
+
 void x86_64Relocator::scanLocalReloc(InputFile &pInputFile, Relocation &pReloc,
                                      eld::IRBuilder &pBuilder,
                                      ELFSection &pSection) {
@@ -175,8 +223,8 @@ void x86_64Relocator::scanLocalReloc(InputFile &pInputFile, Relocation &pReloc,
 void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
                                       eld::IRBuilder &pBuilder,
                                       ELFSection &pSection, CopyRelocs &) {
-  assert(config().codeGenType() == LinkerConfig::Exec &&
-         "scanGlobalReloc currently only supports static executables");
+  // assert(config().codeGenType() == LinkerConfig::Exec &&
+  //       "scanGlobalReloc currently only supports static executables");
 
   ELFObjectFile *Obj = llvm::dyn_cast<ELFObjectFile>(&pInputFile);
   // rsym - The relocation target symbol
@@ -187,6 +235,9 @@ void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
     std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
     // Absolute relocation type, symbol may needs PLT entry or
     // dynamic relocation entry
+    if (config().isCodeStatic()) {
+      return;
+    }
     if (rsym->type() == ResolveInfo::Function) {
       // create PLT for this symbol if it does not have.
       if (!(rsym->reserved() & ReservePLT)) {
@@ -199,18 +250,20 @@ void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
   case llvm::ELF::R_X86_64_GOTPCREL:
   case llvm::ELF::R_X86_64_GOTPCRELX:
   case llvm::ELF::R_X86_64_REX_GOTPCRELX: {
-    if (!(rsym->reserved() & ReserveGOT)) {
-      std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
-      x86_64GOT *gotEntry =
-          m_Target.createGOT(GOT::GOTType::Regular, Obj, rsym);
-      gotEntry->setValueType(GOT::SymbolValue);
-      rsym->setReserved(rsym->reserved() | ReserveGOT);
-    }
+    std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
+
+    if (rsym->reserved() & ReserveGOT)
+      return;
+
+    CreateGOT(Obj, pReloc, !config().isCodeStatic(), m_Target,
+              config().codeGenType() == LinkerConfig::Exec);
+
+    rsym->setReserved(rsym->reserved() | ReserveGOT);
+    return;
   } break;
   default:
     break;
-
-  } // end of switch
+  }
 }
 
 void x86_64Relocator::defineSymbolforGuard(eld::IRBuilder &pBuilder,
@@ -321,6 +374,7 @@ Relocator::Result applyRel(Relocation &pReloc, uint32_t Result,
 
 Relocator::Result eld::relocAbs(Relocation &pReloc, x86_64Relocator &pParent,
                                 RelocationDescription &pRelocDesc) {
+  llvm::outs() << "relocAbs\n";
   DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
   ResolveInfo *rsym = pReloc.symInfo();
   Relocator::Address S = pReloc.symValue(pParent.module());
@@ -384,17 +438,37 @@ Relocator::Result eld::relocPCREL(Relocation &pReloc, x86_64Relocator &pParent,
   return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
 }
 
+// Relocator::Result eld::relocPLT32(Relocation &pReloc, x86_64Relocator
+// &pParent,
+//                                   RelocationDescription &pRelocDesc) {
+
+//   DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
+//   Relocator::Address S = pReloc.symValue(pParent.module());
+//   Relocator::DWord A = pReloc.addend();
+//   Relocator::DWord P = pReloc.place(pParent.module());
+//   const GeneralOptions &options = pParent.config().options();
+
+//   // Static Linking : PLT32 behaves as PC32
+//   Relocator::Address Result = S + A - P;
+
+//   return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+// }
+
 Relocator::Result eld::relocPLT32(Relocation &pReloc, x86_64Relocator &pParent,
                                   RelocationDescription &pRelocDesc) {
-
+  uint32_t Result;
   DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
   Relocator::Address S = pReloc.symValue(pParent.module());
+  if (pReloc.symInfo()->reserved() & Relocator::ReservePLT) {
+    S = pParent.getTarget()
+            .findEntryInPLT(pReloc.symInfo())
+            ->getAddr(pParent.config().getDiagEngine());
+  }
   Relocator::DWord A = pReloc.addend();
   Relocator::DWord P = pReloc.place(pParent.module());
-  const GeneralOptions &options = pParent.config().options();
 
-  // Static Linking : PLT32 behaves as PC32
-  Relocator::Address Result = S + A - P;
+  Result = S + A - P;
+  const GeneralOptions &options = pParent.config().options();
 
   return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
 }
