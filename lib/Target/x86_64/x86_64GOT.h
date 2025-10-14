@@ -6,6 +6,7 @@
 #ifndef ELD_TARGET_x86_64_GOT_H
 #define ELD_TARGET_x86_64_GOT_H
 
+#include "eld/Core/Module.h"
 #include "eld/Fragment/GOT.h"
 #include "eld/Support/Memory.h"
 #include "eld/Target/GNULDBackend.h"
@@ -63,14 +64,31 @@ private:
 
 class x86_64GOTPLT0 : public x86_64GOT {
 public:
-  x86_64GOTPLT0(ELFSection *O, ResolveInfo *R)
-      : x86_64GOT(GOT::GOTPLT0, O, R, /*Align=*/8, /*Size=*/16) {}
+  x86_64GOTPLT0(ELFSection *O, Module *M)
+      : x86_64GOT(GOT::GOTPLT0, O, nullptr, /*Align=*/8, /*Size=*/24),
+        M(M) {}
 
   x86_64GOT *getFirst() override { return this; }
 
   x86_64GOT *getNext() override { return nullptr; }
 
-  static x86_64GOTPLT0 *Create(ELFSection *O, ResolveInfo *R);
+  virtual llvm::ArrayRef<uint8_t> getContent() const override {
+    // Fill first qword with .dynamic address for resolver protocol.
+    memset(Value, 0, sizeof(Value));
+    if (M) {
+      if (ELFSection *Dyn = M->getSection(".dynamic")) {
+        uint64_t DynAddr = Dyn->addr();
+        memcpy(Value, &DynAddr, sizeof(uint64_t));
+      }
+    }
+    return llvm::ArrayRef(Value, sizeof(Value));
+  }
+
+  static x86_64GOTPLT0 *Create(ELFSection *O, Module *M);
+
+private:
+  Module *M;
+  mutable uint8_t Value[24];
 };
 
 class x86_64GOTPLTN : public x86_64GOT {

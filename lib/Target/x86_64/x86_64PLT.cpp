@@ -19,28 +19,17 @@ x86_64PLT0 *x86_64PLT0::Create(eld::IRBuilder &I, x86_64GOT *G, ELFSection *O,
   x86_64PLT0 *P = make<x86_64PLT0>(G, I, O, R, 16, 16);
   O->addFragmentAndUpdateSize(P);
 
-  // Create a relocation and point to the GOT.
-  Relocation *r1 = nullptr;
-  Relocation *r2 = nullptr;
-
-  std::string name = "__gotplt0__";
-  // create LDSymbol for the stub
-  LDSymbol *symbol = I.addSymbol<IRBuilder::Force, IRBuilder::Resolve>(
-      O->getInputFile(), name, ResolveInfo::NoType, ResolveInfo::Define,
-      ResolveInfo::Local,
-      8, // size
-      0, // value
-      make<FragmentRef>(*G, 0), ResolveInfo::Internal,
-      true /* isPostLTOPhase */);
-  symbol->setShouldIgnore(false);
-
-  r1 = Relocation::Create(llvm::ELF::R_X86_64_JUMP_SLOT, 64,
-                          make<FragmentRef>(*P, 0), 0);
-  r1->setSymInfo(symbol->resolveInfo());
-  r2 = Relocation::Create(llvm::ELF::R_X86_64_JUMP_SLOT, 64,
-                          make<FragmentRef>(*P, 8), 4);
-  r2->setSymInfo(symbol->resolveInfo());
+  //  pushq GOTPLT+8(%rip)  -> R_X86_64_PC32 at P+2 targeting G+8 with addend -4
+  //  jmp *GOTPLT+16(%rip)  -> R_X86_64_PC32 at P+8 targeting G+16 with addend
+  //  -4
+  Relocation *r1 = Relocation::Create(llvm::ELF::R_X86_64_PC32, 32,
+                                      make<FragmentRef>(*P, 2), -4);
+  r1->modifyRelocationFragmentRef(make<FragmentRef>(*G, 8));
   O->addRelocation(r1);
+
+  Relocation *r2 = Relocation::Create(llvm::ELF::R_X86_64_PC32, 32,
+                                      make<FragmentRef>(*P, 8), -4);
+  r2->modifyRelocationFragmentRef(make<FragmentRef>(*G, 16));
   O->addRelocation(r2);
 
   return P;
