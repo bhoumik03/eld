@@ -1,0 +1,82 @@
+Internship Progress Report (Sep 22 – Oct 29)
+Project: ELD x86_64 Dynamic Linking Enablement
+Organization: Qualcomm (ELD linker project)
+Student: [Your Name]
+College Evaluation: Mid‑term/Quad Assessment
+
+Overview
+- Goal: Advance x86_64 dynamic linking in ELD with per‑function linkage (PLTN/GOTPLTN), correct dynamic relocation emission (RELATIVE, JUMP_SLOT, GLOB_DAT), musl libc compatibility, and shared library (ET_DYN) creation.
+- Note: PLT0/GOTPLT0 were completed earlier; the focus here is PLTN and GOTPLTN.
+
+Task and Timeline
+
+1) Per‑Function Linkage (PLTN/GOTPLTN)
+Timeline: Sep 30 – Oct 6 | Effort: ~3 days (~24 hours)
+- Implemented per‑symbol PLT entries (PLTN) that branch via the symbol’s GOTPLTN slot, establishing the indirection required for lazy binding and interposition.
+- Added per‑entry relocation index encoding so the dynamic loader can perform first‑call resolution and cache the resolved address in the corresponding GOTPLTN slot.
+- Ensured one‑to‑one pairing between PLTN and GOTPLTN for each external function symbol; validated indirect call routing and slot patching semantics.
+
+2) Dynamic Relocation Emission (RELATIVE, JUMP_SLOT, GLOB_DAT)
+- Timeline/Effort: Oct 7–13 (~3.5 days, ~28 hours).
+- Objective: Define and implement a musl‑compatible x86_64 relocation policy for correct binding, interposition, and lazy resolution.
+- Policy: Local/hidden/non‑preemptible → RELATIVE; preemptible globals → GLOB_DAT; indirect calls via PLT → JUMP_SLOT.
+- GOT/GOTPCREL: Route via GOT; in DSOs use RELATIVE for non‑preemptible/hidden, otherwise GLOB_DAT; normalize PC‑relative addends to remove instruction bias.
+- Executables vs DSOs: Executables favor RELATIVE for non‑preemptible; DSOs preserve interposition via GLOB_DAT/JUMP_SLOT; non‑ALLOC sections are adjusted statically only.
+- Output Assembly: Consolidate into .rela.dyn (RELATIVE/GLOB_DAT) and .rela.plt (JUMP_SLOT), with correct links/indices; publish RELACOUNT.
+- Result: Loader‑friendly relocation tables that bind correctly under musl, support lazy binding and interposition, and avoid mis‑relocations.
+3) musl libc Compatibility (Runtime Linker Integration)
+Timeline: Oct 14 – Oct 20 | Effort: ~3 days (~24 hours)
+- Counted and published the number of RELATIVE relocations (RELACOUNT) in the dynamic section to support musl’s rtld fast‑path.
+- Ensured `.rela.plt` contains JUMP_SLOT entries per PLTN and `.rela.dyn` holds RELATIVE/GLOB_DAT entries per data reference, all with correct addends and offsets.
+- Verified that lazy binding and direct bindings operate correctly under musl, including caching in GOTPLTN and symbol resolution via `.dynsym`.
+
+4) Shared Library Creation (ET_DYN)
+Timeline: Oct 21 – Oct 29 | Effort: ~3 days (~24 hours)
+- Produced ET_DYN outputs with complete `.dynamic`, `.dynsym/.dynstr`, `.rela.dyn`, `.rela.plt`, and associated links.
+- Merged per‑file relocation tables into consolidated output sections; computed section sizes and ensured proper `sh_link`/`sh_info` relationships.
+- Validated end‑to‑end DSO creation and consumption: PLT indirection via PLTN/GOTPLTN, data binding via GLOB_DAT, and base fixups via RELATIVE.
+
+Major Learnings
+- Developed a strong grasp of program execution environments: ELF layout, dynamic loader behavior, symbol resolution, and relocation processing across executables and shared objects.
+- Deepened understanding of dynamic linking: binding models (lazy vs now), interposition, preemptibility, and how relocation records and dynamic metadata drive runtime behavior.
+- Improved validation and debugging discipline across different runtime linkers (e.g., musl) and build targets, focusing on reproducible scenarios and loader-friendly outputs.
+Challenges and Resolutions
+- Assimilating dynamic linking, ELF/ABI details, and runtime loader semantics required substantial study and practical experimentation.
+- Studying lld/GNU ld designs and documentation to align policy and behavior, and translating those patterns into ELD’s architecture.
+- Balancing implementation with concept mastery; addressed through milestone planning and scenario‑driven tests to validate understanding.
+Impact and Validation
+- Correct lazy binding through PLTN/GOTPLTN and reliable data/function bindings via RELATIVE/GLOB_DAT.
+- Shared libraries now build as ET_DYN with coherent dynamic sections; musl-based runtime tests pass for representative scenarios.
+
+Declaration
+I confirm that the work described above was performed by me during the internship period indicated, under mentorship from the ELD team at Qualcomm. This report reflects my understanding, effort, and progress during Sep 22 – Oct 29.
+
+ Timeline/Effort: Oct 7 – Oct 13 (~3.5 days, ~28 hours)
+  - Objective: Define and implement a relocation-emission strategy for x86_64 dynamic linking that ensures correct binding, interposition, and lazy
+  resolution, and is compatible with musl’s runtime linker.
+  - Approach: In the relocation scanning phase, classify each relocation using symbol visibility/preemptibility, relocation form (absolute, PC‑relative,
+  GOT/GOTPCREL), section class (ALLOC vs non‑ALLOC), and output kind (executable vs shared).
+  - Policy:
+      - Local/hidden/non‑preemptible references → emit RELATIVE (base‑relative fixups, no symbol lookup).
+      - Preemptible globals (data/function pointers) → emit GLOB_DAT (symbol‑based binding, preserves interposition).
+      - Indirect function calls via PLT → emit JUMP_SLOT per function (lazy binding on first call; subsequent calls use the cached address).
+  - GOT/GOTPCREL handling: Route through GOT entries; choose RELATIVE for non‑preemptible/hidden in DSOs, otherwise GLOB_DAT. Normalize PC‑relative addends
+  to remove instruction bias so loader math is correct (prevents double adjustments).
+  - Executable vs DSO nuance: Executables favor RELATIVE for non‑preemptible/hidden cases; DSOs retain interposition via GLOB_DAT/JUMP_SLOT as needed.
+  Non‑ALLOC sections are adjusted statically and excluded from dynamic tables.
+  - Output assembly: Consolidate entries into .rela.dyn (RELATIVE/GLOB_DAT) and .rela.plt (JUMP_SLOT) with correct indices/links; publish RELACOUNT for
+  RELATIVE to enable musl fast‑path during startup.
+  - Result: Lean, loader‑friendly relocation tables that bind correctly under musl, support lazy binding and interposition, and avoid runtime
+  mis‑relocations through consistent addend normalization.
+
+   - Major Learnings
+      - Developed a strong grasp of program execution environments: ELF layout, dynamic loader behavior, symbol resolution, and relocation processing across
+  executables and shared objects.
+      - Deepened understanding of dynamic linking: binding models (lazy vs now), interposition, preemptibility, and how relocation records and dynamic
+  metadata drive runtime behavior.
+      - Improved validation and debugging discipline across different runtime linkers (e.g., musl) and build targets, focusing on reproducible scenarios and
+  loader-friendly outputs.
+  - Challenges and Resolutions
+      - Assimilating dynamic linking, ELF/ABI details, and runtime loader semantics required substantial study and practical experimentation.
+      - Studying lld/GNU ld designs and documentation to align policy and behavior, and translating those patterns into ELD’s architecture.
+      - Balancing implementation with concept mastery; addressed through milestone planning and scenario‑driven tests to validate understanding

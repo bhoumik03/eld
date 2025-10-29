@@ -1,0 +1,15 @@
+#--PLT0stub.test-----------Executable---------#
+#BEGIN_COMMENT
+#Test the three instructions of PLT0 stub.
+#The first instruction points to GOTPLT+0x8
+#The second instruction points to GOTPLT+0x10
+#The third instruction is a noop
+#END_COMMENT
+#START_TEST
+RUN: %clang %clangopts -c %p/Inputs/1.c -o %t.1.o
+RUN: %clang %clangopts -c %p/Inputs/2.c -o %t.2.o
+RUN: %link %linkopts -shared -o %t.lib2.so %t.2.o
+RUN: %link %linkopts -o %t.out %t.1.o %t.lib2.so
+RUN: %readelf -S %t.out | grep '\.dynamic' | %filecheck %s 
+#END_TEST
+CHECK: 

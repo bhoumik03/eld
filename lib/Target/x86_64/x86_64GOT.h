@@ -65,8 +65,7 @@ private:
 class x86_64GOTPLT0 : public x86_64GOT {
 public:
   x86_64GOTPLT0(ELFSection *O, Module *M)
-      : x86_64GOT(GOT::GOTPLT0, O, nullptr, /*Align=*/8, /*Size=*/24),
-        M(M) {}
+      : x86_64GOT(GOT::GOTPLT0, O, nullptr, /*Align=*/8, /*Size=*/24), M(M) {}
 
   x86_64GOT *getFirst() override { return this; }
 
