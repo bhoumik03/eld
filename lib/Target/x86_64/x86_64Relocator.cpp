@@ -184,18 +184,24 @@ void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
 
   switch (pReloc.type()) {
   case llvm::ELF::R_X86_64_PLT32: {
-    if (config().isCodeStatic()) {
+    // Static code: treat PLT32 as a normal PC-relative call/jmp.
+    if (config().isCodeStatic())
       return;
-    }
     std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
-    // Absolute relocation type, symbol may needs PLT entry or
-    // dynamic relocation entry
-    if (rsym->type() == ResolveInfo::Function) {
-      // create PLT for this symbol if it does not have.
-      if (!(rsym->reserved() & ReservePLT)) {
-        m_Target.createPLT(Obj, rsym);
-        rsym->setReserved(rsym->reserved() | ReservePLT);
-      }
+    // Determine if the target is external to this link unit.
+    const bool isLocal = rsym->isLocal();
+    const bool isDefinedHere = rsym->isDefine() && !rsym->isDyn();
+    const bool isExternal = !(isLocal || isDefinedHere);
+    // Local or link-time known definitions: keep PC-relative, no PLT.
+    if (!isExternal)
+      return;
+    // Only functions use PLT entries; PLT32 for data shouldn't synthesize PLT.
+    if (rsym->type() != ResolveInfo::Function)
+      return;
+    // External function: create PLT if not already present.
+    if (!(rsym->reserved() & ReservePLT)) {
+      m_Target.createPLT(Obj, rsym);
+      rsym->setReserved(rsym->reserved() | ReservePLT);
     }
     return;
   }
@@ -387,17 +393,25 @@ Relocator::Result eld::relocPCREL(Relocation &pReloc, x86_64Relocator &pParent,
   return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
 }
 
+// R_X86_64_PLT32 - PC-relative 32-bit relocation for function calls
+// Formula: S + A - P (or PLT_entry + A - P if symbol has PLT)
 Relocator::Result eld::relocPLT32(Relocation &pReloc, x86_64Relocator &pParent,
                                   RelocationDescription &pRelocDesc) {
-
+  uint32_t Result;
   DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
   Relocator::Address S = pReloc.symValue(pParent.module());
+
+  // For external functions, redirect through PLT
+  if (pReloc.symInfo()->reserved() & Relocator::ReservePLT) {
+    S = pParent.getTarget()
+            .findEntryInPLT(pReloc.symInfo())
+            ->getAddr(pParent.config().getDiagEngine());
+  }
   Relocator::DWord A = pReloc.addend();
   Relocator::DWord P = pReloc.place(pParent.module());
-  const GeneralOptions &options = pParent.config().options();
 
-  // Static Linking : PLT32 behaves as PC32
-  Relocator::Address Result = S + A - P;
+  Result = S + A - P;
+  const GeneralOptions &options = pParent.config().options();
 
   return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
 }
