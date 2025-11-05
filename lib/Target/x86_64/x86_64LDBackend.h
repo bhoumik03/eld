@@ -92,9 +92,21 @@ public:
   void doPreLayout() override;
 
   DynRelocType getDynRelocType(const Relocation *X) const override {
+    if (X->type() == llvm::ELF::R_X86_64_GLOB_DAT)
+      return DynRelocType::GLOB_DAT;
     if (X->type() == llvm::ELF::R_X86_64_JUMP_SLOT)
       return DynRelocType::JMP_SLOT;
+    if (X->type() == llvm::ELF::R_X86_64_RELATIVE)
+      return DynRelocType::RELATIVE;
     return DynRelocType::DEFAULT;
+  }
+
+  bool hasSymInfo(const Relocation *X) const override {
+    if (X->type() == llvm::ELF::R_X86_64_RELATIVE)
+      return false;
+    if (X->symInfo()->binding() == ResolveInfo::Local)
+      return false;
+    return true;
   }
 
 private:
@@ -118,6 +130,7 @@ private:
   llvm::DenseMap<ResolveInfo *, x86_64GOT *> m_GOTMap;
   llvm::DenseMap<ResolveInfo *, x86_64GOT *> m_GOTPLTMap;
   llvm::DenseMap<ResolveInfo *, x86_64PLT *> m_PLTMap;
+  std::map<Relocation *, const Relocation *> m_RelativeRelocMap;
 };
 } // namespace eld
 

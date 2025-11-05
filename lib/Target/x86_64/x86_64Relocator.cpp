@@ -156,22 +156,91 @@ void x86_64Relocator::scanRelocation(Relocation &pReloc,
     scanGlobalReloc(pInputFile, pReloc, pLinker, *section, CopyRelocs);
 }
 
+namespace {
+
+Relocation *helper_DynRel_init(ELFObjectFile *Obj, Relocation *R,
+                               ResolveInfo *pSym, Fragment *F, uint32_t pOffset,
+                               Relocator::Type pType, x86_64LDBackend &B) {
+  Relocation *rela_entry = Obj->getRelaDyn()->createOneReloc();
+
+  rela_entry->setType(pType);
+  rela_entry->setTargetRef(make<FragmentRef>(*F, pOffset));
+  rela_entry->setSymInfo(pSym);
+
+  if (pType == llvm::ELF::R_X86_64_GLOB_DAT) {
+    // For preemptible symbols, dynamic loader writes the resolved value; addend
+    // is 0.
+    rela_entry->setAddend(0);
+  } else if (pType == llvm::ELF::R_X86_64_RELATIVE) {
+    // For RELATIVE relocations used to initialize GOT or other data with
+    // non-preemptible symbols under PIC/PIE, we want r_addend = S.
+    // The writer computes r_addend as getRelocator()->getSymValue(R) + RAddend.
+    // Set RAddend to 0 here so the writer uses just the symbol value.
+    rela_entry->setAddend(0);
+  } else if (R) {
+    rela_entry->setAddend(R->addend());
+  } else {
+    rela_entry->setAddend(0);
+  }
+
+  if (R && (pType == llvm::ELF::R_X86_64_RELATIVE)) {
+    B.recordRelativeReloc(rela_entry, R);
+  }
+  return rela_entry;
+}
+
+x86_64GOT &CreateGOT(ELFObjectFile *Obj, Relocation &pReloc, bool pHasRel,
+                     x86_64LDBackend &B, bool isExec) {
+  ResolveInfo *rsym = pReloc.symInfo();
+  x86_64GOT *G = B.createGOT(GOT::Regular, Obj, rsym);
+
+  if (!pHasRel) {
+    G->setValueType(GOT::SymbolValue);
+    return *G;
+  }
+
+  // In PIC (PIE/shared), GOT entries for non-preemptible symbols should use
+  // RELATIVE. Preemptible symbols use GLOB_DAT. Do not gate RELATIVE on
+  // executable-vs-shared; PIE is still PIC.
+  bool useRelative = !B.isSymbolPreemptible(*rsym);
+
+  helper_DynRel_init(Obj, &pReloc, rsym, G, 0x0,
+                     useRelative ? llvm::ELF::R_X86_64_RELATIVE
+                                 : llvm::ELF::R_X86_64_GLOB_DAT,
+                     B);
+
+  return *G;
+}
+
+} // namespace
+
 void x86_64Relocator::scanLocalReloc(InputFile &pInputFile, Relocation &pReloc,
                                      eld::IRBuilder &pBuilder,
                                      ELFSection &pSection) {
+  ELFObjectFile *Obj = llvm::dyn_cast<ELFObjectFile>(&pInputFile);
   // rsym - The relocation target symbol
   ResolveInfo *rsym = pReloc.symInfo();
 
   // Special case when the linker makes a symbol local for example linker
   // defined symbols such as _DYNAMIC
   switch (pReloc.type()) {
-
+  case llvm::ELF::R_X86_64_GOTPCREL:
+  case llvm::ELF::R_X86_64_GOTPCRELX:
+  case llvm::ELF::R_X86_64_REX_GOTPCRELX: {
+    std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
+    if (rsym->reserved() & ReserveGOT)
+      return;
+    // Even for local symbols and static linking, create a GOT entry and fill
+    // it at link time . This avoids implementing relaxations now.
+    x86_64GOT &G = CreateGOT(Obj, pReloc, config().isCodeIndep(), m_Target,
+                             config().codeGenType() == LinkerConfig::Exec);
+    (void)G;
+    rsym->setReserved(rsym->reserved() | ReserveGOT);
+    return;
+  }
   default:
     break;
   }
-
-  if (rsym && (ResolveInfo::Hidden == rsym->visibility()))
-    return;
 }
 
 void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
@@ -197,13 +266,16 @@ void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
   case llvm::ELF::R_X86_64_GOTPCREL:
   case llvm::ELF::R_X86_64_GOTPCRELX:
   case llvm::ELF::R_X86_64_REX_GOTPCRELX: {
-    if (!(rsym->reserved() & ReserveGOT)) {
-      std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
-      x86_64GOT *gotEntry =
-          m_Target.createGOT(GOT::GOTType::Regular, Obj, rsym);
-      gotEntry->setValueType(GOT::SymbolValue);
-      rsym->setReserved(rsym->reserved() | ReserveGOT);
-    }
+    std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
+
+    if (rsym->reserved() & ReserveGOT)
+      return;
+
+    CreateGOT(Obj, pReloc, !config().isCodeStatic(), m_Target,
+              config().codeGenType() == LinkerConfig::Exec);
+
+    rsym->setReserved(rsym->reserved() | ReserveGOT);
+    return;
   } break;
   default:
     break;

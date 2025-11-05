@@ -1,0 +1,11 @@
+#--ExternDataCall.test-------Executable--#
+#BEGIN_COMMENT
+#Verifies external data calls are handled correctly
+#END_COMMENT
+#START_TEST
+RUN: %clang %clangopts -c %p/Inputs/1.c -o %t.1.o
+RUN: %clang %clangopts -c %p/Inputs/2.c -o %t.2.o
+RUN: %link %linkopts -shared -o %t.lib2.so %t.2.o
+RUN: %link %linkopts -o %t.out %t.1.o %t.lib2.so
+RUN: %t.out; echo $? | %filecheck %s --check-prefix=EXITCODE
+EXITCODE: 7
