@@ -101,6 +101,10 @@ public:
     return DynRelocType::DEFAULT;
   }
 
+  void recordRelativeReloc(Relocation *DynRel, const Relocation *OrigRel) {
+    m_RelativeRelocMap[DynRel] = OrigRel;
+  }
+
   bool hasSymInfo(const Relocation *X) const override {
     if (X->type() == llvm::ELF::R_X86_64_RELATIVE)
       return false;

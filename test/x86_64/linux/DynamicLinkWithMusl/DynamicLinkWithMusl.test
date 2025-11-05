@@ -1,0 +1,12 @@
+REQUIRES: musl
+#--LinkWithMuslSupport.test----------Executable--------#
+BEGIN_COMMENT
+# Test dynamic linking of x86_64 with musl libc.
+#END_COMMENT
+#START_TEST
+RUN: %musl-clang %clangopts %p/Inputs/1.c -o %t.1.out
+RUN: %t.1.out; echo $? | %filecheck %s --check-prefix=EXITCODE
+RUN: file %t.1.out | %filecheck %s
+EXITCODE: 42
+CHECK: dynamically linked
+#END_TEST
