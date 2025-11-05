@@ -231,6 +231,7 @@ x86_64GOT &CreateGOT(ELFObjectFile *Obj, Relocation &pReloc, bool pHasRel,
 void x86_64Relocator::scanLocalReloc(InputFile &pInputFile, Relocation &pReloc,
                                      eld::IRBuilder &pBuilder,
                                      ELFSection &pSection) {
+
   ELFObjectFile *Obj = llvm::dyn_cast<ELFObjectFile>(&pInputFile);
   // rsym - The relocation target symbol
   ResolveInfo *rsym = pReloc.symInfo();
@@ -238,6 +239,16 @@ void x86_64Relocator::scanLocalReloc(InputFile &pInputFile, Relocation &pReloc,
   // Special case when the linker makes a symbol local for example linker
   // defined symbols such as _DYNAMIC
   switch (pReloc.type()) {
+  case llvm::ELF::R_X86_64_64:
+    if (config().isCodeIndep()) {
+      std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
+      rsym->setReserved(rsym->reserved() | ReserveRel);
+      getTarget().checkAndSetHasTextRel(pSection);
+      helper_DynRel_init(Obj, &pReloc, rsym, pReloc.targetRef()->frag(),
+                         pReloc.targetRef()->offset(),
+                         llvm::ELF::R_X86_64_RELATIVE, m_Target);
+    }
+    return;
   case llvm::ELF::R_X86_64_GOTPCREL:
   case llvm::ELF::R_X86_64_GOTPCRELX:
   case llvm::ELF::R_X86_64_REX_GOTPCRELX: {
@@ -266,6 +277,23 @@ void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
   ResolveInfo *rsym = pReloc.symInfo();
 
   switch (pReloc.type()) {
+  case llvm::ELF::R_X86_64_64: {
+    std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
+    bool isSymbolPreemptible = m_Target.isSymbolPreemptible(*rsym);
+    const bool isAbsReloc = (pReloc.type() == llvm::ELF::R_X86_64_64);
+    if (getTarget().symbolNeedsDynRel(*rsym, (rsym->reserved() & ReservePLT),
+                                      isAbsReloc)) {
+      rsym->setReserved(rsym->reserved() | ReserveRel);
+      getTarget().checkAndSetHasTextRel(pSection);
+      if (pReloc.type() == llvm::ELF::R_X86_64_64) {
+        helper_DynRel_init(Obj, &pReloc, rsym, pReloc.targetRef()->frag(),
+                           pReloc.targetRef()->offset(),
+                           isSymbolPreemptible ? llvm::ELF::R_X86_64_64
+                                               : llvm::ELF::R_X86_64_RELATIVE,
+                           m_Target);
+      }
+    }
+  }
   case llvm::ELF::R_X86_64_PLT32: {
     // Static code: treat PLT32 as a normal PC-relative call/jmp.
     if (config().isCodeStatic())
