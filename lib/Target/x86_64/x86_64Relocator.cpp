@@ -94,6 +94,7 @@ bool x86_64Relocator::isInvalidReloc(Relocation &pReloc) const {
   case llvm::ELF::R_X86_64_TPOFF64:
   case llvm::ELF::R_X86_64_DTPOFF32:
   case llvm::ELF::R_X86_64_DTPOFF64:
+  case llvm::ELF::R_X86_64_GOTTPOFF:
     return false;
   default:
     return true; // Other Relocations are not supported as of now
@@ -178,7 +179,12 @@ Relocation *helper_DynRel_init(ELFObjectFile *Obj, Relocation *R,
     // Set RAddend to 0 here so the writer uses just the symbol value.
     rela_entry->setAddend(0);
   } else if (R) {
-    rela_entry->setAddend(R->addend());
+    // For TLS IE GOT slots, ignore the instruction-local -4 addend.
+    if (pType == llvm::ELF::R_X86_64_TPOFF64) {
+      rela_entry->setAddend(0);
+    } else {
+      rela_entry->setAddend(R->addend());
+    }
   } else {
     rela_entry->setAddend(0);
   }
@@ -249,6 +255,26 @@ void x86_64Relocator::scanLocalReloc(InputFile &pInputFile, Relocation &pReloc,
     rsym->setReserved(rsym->reserved() | ReserveGOT);
     return;
   }
+  case llvm::ELF::R_X86_64_GOTTPOFF: {
+    std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
+    if (rsym->reserved() & ReserveGOT)
+      return;
+    // Create a TLS IE GOT entry.
+    x86_64GOT *G = m_Target.createGOT(GOT::TLS_IE, Obj, rsym);
+    // Executable + non-preemptible: fill GOT at link time with static TP
+    // offset.
+    const bool isExec = (config().codeGenType() == LinkerConfig::Exec);
+    const bool preemptible = m_Target.isSymbolPreemptible(*rsym);
+    if (isExec && !preemptible) {
+      G->setValueType(GOT::TLSStaticSymbolValue);
+    } else {
+      // PIE/shared or preemptible: emit dynamic TPOFF64 for GOT slot.
+      helper_DynRel_init(Obj, &pReloc, rsym, G, 0x0,
+                         llvm::ELF::R_X86_64_TPOFF64, m_Target);
+    }
+    rsym->setReserved(rsym->reserved() | ReserveGOT);
+    return;
+  }
   default:
     break;
   }
@@ -304,7 +330,23 @@ void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
 
     rsym->setReserved(rsym->reserved() | ReserveGOT);
     return;
-  } break;
+  }
+  case llvm::ELF::R_X86_64_GOTTPOFF: {
+    std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
+    if (rsym->reserved() & ReserveGOT)
+      return;
+    x86_64GOT *G = m_Target.createGOT(GOT::TLS_IE, Obj, rsym);
+    const bool isExec = (config().codeGenType() == LinkerConfig::Exec);
+    const bool preemptible = m_Target.isSymbolPreemptible(*rsym);
+    if (isExec && !preemptible) {
+      G->setValueType(GOT::TLSStaticSymbolValue);
+    } else {
+      helper_DynRel_init(Obj, &pReloc, rsym, G, 0x0,
+                         llvm::ELF::R_X86_64_TPOFF64, m_Target);
+    }
+    rsym->setReserved(rsym->reserved() | ReserveGOT);
+    return;
+  }
   default:
     break;
 
@@ -553,4 +595,32 @@ Relocator::Result eld::relocDTPOFF(Relocation &pReloc, x86_64Relocator &pParent,
   Relocator::DWord A = pReloc.addend();
   int64_t Result = S + A;
   return ApplyReloc(pReloc, Result, pRelocDesc, DiagEngine, options);
+}
+
+// R_X86_64_GOTTPOFF - IE model: compute GOT[S] + A - P
+Relocator::Result eld::relocGOTTPOFF(Relocation &pReloc,
+                                     x86_64Relocator &pParent,
+                                     RelocationDescription &pRelocDesc) {
+  DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
+  const GeneralOptions &options = pParent.config().options();
+
+  Relocator::DWord A = pReloc.addend();
+  Relocator::DWord P = pReloc.place(pParent.module());
+  // Find the GOT entry created during scan for this symbol
+  x86_64GOT *gotEntry = pParent.getTarget().findEntryInGOT(pReloc.symInfo());
+  llvm::outs() << "[GOTTPOFF] sym='" << pReloc.symInfo()->name() << "'\n";
+  if (!gotEntry) {
+    llvm::outs() << "[GOTTPOFF] ERROR: missing GOT entry for sym\n";
+    return Relocator::BadReloc;
+  }
+  uint64_t Sg = gotEntry->getAddr(DiagEngine);
+  llvm::outs() << "[GOTTPOFF] GOT_entry_addr="
+               << llvm::format("0x%llx", (unsigned long long)Sg)
+               << " A=" << llvm::format("0x%llx", (unsigned long long)A)
+               << " P=" << llvm::format("0x%llx", (unsigned long long)P)
+               << "\n";
+  uint64_t Result = Sg + A - P;
+  llvm::outs() << "[GOTTPOFF] disp(GOT + A - P)="
+               << llvm::format("0x%llx", (unsigned long long)Result) << "\n";
+  return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
 }
