@@ -95,6 +95,7 @@ bool x86_64Relocator::isInvalidReloc(Relocation &pReloc) const {
   case llvm::ELF::R_X86_64_DTPOFF32:
   case llvm::ELF::R_X86_64_DTPOFF64:
   case llvm::ELF::R_X86_64_GOTTPOFF:
+  case llvm::ELF::R_X86_64_TLSGD:
     return false;
   default:
     return true; // Other Relocations are not supported as of now
@@ -190,7 +191,8 @@ Relocation *helper_DynRel_init(ELFObjectFile *Obj, Relocation *R,
     rela_entry->setAddend(A);
   } else if (R) {
     // For TLS IE GOT slots, ignore the instruction-local -4 addend.
-    if (pType == llvm::ELF::R_X86_64_TPOFF64) {
+    if (pType == llvm::ELF::R_X86_64_TPOFF64 || llvm::ELF::R_X86_64_DTPMOD64 ||
+        llvm::ELF::R_X86_64_DTPOFF64) {
       rela_entry->setAddend(0);
     } else {
       rela_entry->setAddend(R->addend());
@@ -369,6 +371,25 @@ void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
       helper_DynRel_init(Obj, &pReloc, rsym, G, 0x0,
                          llvm::ELF::R_X86_64_TPOFF64, m_Target);
     }
+    rsym->setReserved(rsym->reserved() | ReserveGOT);
+    return;
+  }
+  case llvm::ELF::R_X86_64_TLSGD: {
+    std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
+    if (rsym->reserved() & ReserveGOT)
+      return;
+    // Create TLS GD pair (two consecutive GOT entries)
+    x86_64GOT *G = m_Target.createGOT(GOT::TLS_GD, Obj, rsym);
+    // Emit dynamic relocations for the pair: DTPMOD64 and DTPOFF64
+    // First word: module ID
+    helper_DynRel_init(Obj, &pReloc, rsym, G, 0x0, llvm::ELF::R_X86_64_DTPMOD64,
+                       m_Target);
+    // Second word: dtv offset (next GOT entry)
+    x86_64GOT *G2 = G->getNext();
+    if (!G2)
+      G2 = m_Target.createGOT(GOT::TLS_GD, Obj, rsym);
+    helper_DynRel_init(Obj, &pReloc, rsym, G2, 0x0,
+                       llvm::ELF::R_X86_64_DTPOFF64, m_Target);
     rsym->setReserved(rsym->reserved() | ReserveGOT);
     return;
   }
@@ -648,4 +669,22 @@ Relocator::Result eld::relocGOTTPOFF(Relocation &pReloc,
   llvm::outs() << "[GOTTPOFF] disp(GOT + A - P)="
                << llvm::format("0x%llx", (unsigned long long)Result) << "\n";
   return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
+}
+
+// R_X86_64_TLSGD - RIP-relative disp32 to the start of the TLS GD pair in .got
+Relocator::Result eld::relocTLSGD(Relocation &pReloc, x86_64Relocator &pParent,
+                                  RelocationDescription &pRelocDesc) {
+  DiagnosticEngine *DiagEngine = pParent.config().getDiagEngine();
+  const GeneralOptions &options = pParent.config().options();
+  Relocator::DWord A = pReloc.addend();
+  Relocator::DWord P = pReloc.place(pParent.module());
+  x86_64GOT *gd0 = pParent.getTarget().findEntryInGOT(pReloc.symInfo());
+  if (!gd0) {
+    llvm::outs() << "[TLSGD] ERROR: missing GD GOT entry for sym='"
+                 << pReloc.symInfo()->name() << "'\n";
+    return Relocator::BadReloc;
+  }
+  uint64_t Sg = gd0->getAddr(DiagEngine);
+  uint64_t disp = Sg + A - P;
+  return applyRel(pReloc, disp, pRelocDesc, DiagEngine, options);
 }
