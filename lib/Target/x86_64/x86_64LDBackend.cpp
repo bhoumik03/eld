@@ -80,6 +80,25 @@ void x86_64LDBackend::initDynamicSections(ELFObjectFile &InputFile) {
 }
 
 void x86_64LDBackend::initTargetSymbols() {
+  // Define the symbol _GLOBAL_OFFSET_TABLE_ if there is a symbol with the
+  // same name in input
+  auto SymbolName = "_GLOBAL_OFFSET_TABLE_";
+  if (LinkerConfig::Object != config().codeGenType()) {
+    m_pGOTSymbol =
+        m_Module.getIRBuilder()
+            ->addSymbol<IRBuilder::AsReferred, IRBuilder::Resolve>(
+                m_Module.getInternalInput(Module::Script), SymbolName,
+                ResolveInfo::Object, ResolveInfo::Define, ResolveInfo::Local,
+                0x0, // size
+                0x0, // value
+                FragmentRef::null(), ResolveInfo::Hidden);
+    if (m_Module.getConfig().options().isSymbolTracingRequested() &&
+        m_Module.getConfig().options().traceSymbol(SymbolName))
+      config().raise(Diag::target_specific_symbol) << SymbolName;
+    if (m_pGOTSymbol)
+      m_pGOTSymbol->setShouldIgnore(false);
+  }
+
   if (config().codeGenType() == LinkerConfig::Object)
     return;
 
@@ -135,6 +154,44 @@ void x86_64LDBackend::doPreLayout() {
   }
 }
 
+void x86_64LDBackend::defineGOTSymbol(Fragment &pFrag) {
+  // define symbol _GLOBAL_OFFSET_TABLE_
+  auto SymbolName = "_GLOBAL_OFFSET_TABLE_";
+  if (m_pGOTSymbol != nullptr) {
+    m_pGOTSymbol =
+        m_Module.getIRBuilder()
+            ->addSymbol<IRBuilder::Force, IRBuilder::Unresolve>(
+                m_Module.getInternalInput(Module::Script), SymbolName,
+                ResolveInfo::Object, ResolveInfo::Define, ResolveInfo::Local,
+                0x0, // size
+                0x0, // value
+                make<FragmentRef>(pFrag, 0x0), ResolveInfo::Hidden);
+  } else {
+    m_pGOTSymbol =
+        m_Module.getIRBuilder()
+            ->addSymbol<IRBuilder::Force, IRBuilder::Resolve>(
+                pFrag.getOwningSection()->getInputFile(), SymbolName,
+                ResolveInfo::Object, ResolveInfo::Define, ResolveInfo::Local,
+                0x0, // size
+                0x0, // value
+                make<FragmentRef>(pFrag, 0x0), ResolveInfo::Hidden);
+  }
+  if (m_Module.getConfig().options().isSymbolTracingRequested() &&
+      m_Module.getConfig().options().traceSymbol(SymbolName))
+    config().raise(Diag::target_specific_symbol) << SymbolName;
+  m_pGOTSymbol->setShouldIgnore(false);
+}
+
+bool x86_64LDBackend::finalizeScanRelocations() {
+  Fragment *frag = nullptr;
+  if (auto *GOTPLT = getGOTPLT())
+    if (GOTPLT->hasSectionData())
+      frag = *GOTPLT->getFragmentList().begin();
+  if (frag)
+    defineGOTSymbol(*frag);
+  return true;
+}
+
 x86_64ELFDynamic *x86_64LDBackend::dynamic() { return m_pDynamic; }
 
 // Create GOT entry.
@@ -169,7 +226,7 @@ x86_64GOT *x86_64LDBackend::createGOT(GOT::GOTType T, ELFObjectFile *Obj,
     G = x86_64GDGOT::Create(Obj->getGOT(), R);
     break;
   case GOT::TLS_LD:
-    assert(0);
+    G = x86_64LDGOT::Create(getGOT(), R);
     break;
   case GOT::TLS_IE:
     G = x86_64IEGOT::Create(Obj->getGOT(), R);

@@ -186,7 +186,7 @@ void GNULDBackend::insertTimingFragmentStub() {
   LayoutInfo *layoutInfo = m_Module.getLayoutInfo();
   if (layoutInfo)
     layoutInfo->recordFragment(F->getOwningSection()->getInputFile(),
-                      F->getOwningSection(), F);
+                               F->getOwningSection(), F);
   m_pTimingFragment = F;
 }
 
@@ -276,7 +276,7 @@ eld::Expected<void> GNULDBackend::initStdSections() {
 
   if (layoutInfo)
     layoutInfo->recordFragment(F->getOwningSection()->getInputFile(),
-                      F->getOwningSection(), F);
+                               F->getOwningSection(), F);
 
   return eld::Expected<void>();
 }
@@ -856,10 +856,10 @@ void GNULDBackend::sizeDynamic() {
     if (llvm::dyn_cast<ELFFileBase>(lib)->isELFNeeded()) {
       const ELFDynObjectFile *dynObjFile = llvm::cast<ELFDynObjectFile>(lib);
       if (addedLibs.count(dynObjFile->getInput()->getMemArea()))
-          continue;
+        continue;
       addedLibs.insert(dynObjFile->getInput()->getMemArea());
-      std::size_t SONameOffset = FileFormat->addStringToDynStrTab(
-          dynObjFile->getSOName());
+      std::size_t SONameOffset =
+          FileFormat->addStringToDynStrTab(dynObjFile->getSOName());
       auto DTEntry = dynamic()->reserveNeedEntry();
       DTEntry->setValue(llvm::ELF::DT_NEEDED, SONameOffset);
     }
@@ -1095,9 +1095,11 @@ GNULDBackend::emitRegNamePools(llvm::FileOutputBuffer &pOutput) {
 
   // emit the first ELF symbol
   if (config().targets().is32Bits())
-    emitSymbol32(symtab32[0], LDSymbol::null(), strtab, 0, 0, /*IsDynSymTab=*/false);
+    emitSymbol32(symtab32[0], LDSymbol::null(), strtab, 0, 0,
+                 /*IsDynSymTab=*/false);
   else
-    emitSymbol64(symtab64[0], LDSymbol::null(), strtab, 0, 0, /*IsDynSymTab=*/false);
+    emitSymbol64(symtab64[0], LDSymbol::null(), strtab, 0, 0,
+                 /*IsDynSymTab=*/false);
 
   m_pSymIndexMap[LDSymbol::null()] = 0;
 
@@ -1114,11 +1116,11 @@ GNULDBackend::emitRegNamePools(llvm::FileOutputBuffer &pOutput) {
       continue;
     }
     if (config().targets().is32Bits())
-      emitSymbol32(symtab32[symIdx], S->outSymbol(), strtab, strtabsize,
-                   symIdx, /*IsDynSymTab=*/false);
+      emitSymbol32(symtab32[symIdx], S->outSymbol(), strtab, strtabsize, symIdx,
+                   /*IsDynSymTab=*/false);
     else
-      emitSymbol64(symtab64[symIdx], S->outSymbol(), strtab, strtabsize,
-                   symIdx, /*IsDynSymTab=*/false);
+      emitSymbol64(symtab64[symIdx], S->outSymbol(), strtab, strtabsize, symIdx,
+                   /*IsDynSymTab=*/false);
     if ((S->isGlobal() || S->isWeak()) && !firstNonLocal)
       firstNonLocal = symIdx;
     strtabsize += std::string(S->name()).size() + 1;
@@ -3088,8 +3090,7 @@ bool GNULDBackend::layout() {
   // there is no SECTIONS command, then evaluate BEFORE_SECTIONS assignments
   // again.
   {
-    eld::RegisterTimer T("Evaluate Script Assignments",
-                         "Establish Layout",
+    eld::RegisterTimer T("Evaluate Script Assignments", "Establish Layout",
                          m_Module.getConfig().options().printTimingStats());
     evaluateScriptAssignments(/*afterLayout=*/true);
   }
@@ -3825,6 +3826,59 @@ void GNULDBackend::checkAndSetHasTextRel(const ELFSection &pSection) {
   return;
 }
 
+// /// sortRelocation - sort the dynamic relocations to let dynamic linker
+// /// process relocations more efficiently
+// void GNULDBackend::sortRelocation(ELFSection &pSection) {
+//   if (!config().options().hasCombReloc())
+//     return;
+
+//   if (pSection.getKind() != LDFileFormat::DynamicRelocation)
+//     return;
+
+//   if ((pSection.name() != ".rel.dyn") && (pSection.name() != ".rela.dyn"))
+//     return;
+
+//   std::sort(pSection.getRelocations().begin(),
+//   pSection.getRelocations().end(),
+//             [this](Relocation *X, Relocation *Y) {
+//               // 1. compare if relocation is relative
+//               if (!hasSymInfo(X)) {
+//                 if (hasSymInfo(Y))
+//                   return true;
+//               } else if (!hasSymInfo(Y)) {
+//                 return false;
+//               } else {
+//                 // 2. compare the symbol index
+//                 size_t symIdxX = getDynSymbolIdx(X->symInfo()->outSymbol());
+//                 size_t symIdxY = getDynSymbolIdx(Y->symInfo()->outSymbol());
+//                 if (symIdxX < symIdxY)
+//                   return true;
+//                 if (symIdxX > symIdxY)
+//                   return false;
+//               }
+
+//               // 3. compare the relocation address
+//               if (X->place(m_Module) < Y->place(m_Module))
+//                 return true;
+//               if (X->place(m_Module) > Y->place(m_Module))
+//                 return false;
+
+//               // 4. compare the relocation type
+//               if (X->type() < Y->type())
+//                 return true;
+//               if (X->type() > Y->type())
+//                 return false;
+
+//               // 5. compare the addend
+//               if (X->addend() < Y->addend())
+//                 return true;
+//               if (X->addend() > Y->addend())
+//                 return false;
+
+//               return false;
+//             });
+// }
+
 /// sortRelocation - sort the dynamic relocations to let dynamic linker
 /// process relocations more efficiently
 void GNULDBackend::sortRelocation(ELFSection &pSection) {
@@ -3839,14 +3893,28 @@ void GNULDBackend::sortRelocation(ELFSection &pSection) {
 
   std::sort(pSection.getRelocations().begin(), pSection.getRelocations().end(),
             [this](Relocation *X, Relocation *Y) {
-              // 1. compare if relocation is relative
+              // 1. RELATIVE relocations always come first
+              bool xIsRelative = (X->type() == llvm::ELF::R_X86_64_RELATIVE ||
+                                  X->type() == llvm::ELF::R_ARM_RELATIVE ||
+                                  X->type() == llvm::ELF::R_AARCH64_RELATIVE);
+              bool yIsRelative = (Y->type() == llvm::ELF::R_X86_64_RELATIVE ||
+                                  Y->type() == llvm::ELF::R_ARM_RELATIVE ||
+                                  Y->type() == llvm::ELF::R_AARCH64_RELATIVE);
+
+              if (xIsRelative && !yIsRelative)
+                return true;
+              if (!xIsRelative && yIsRelative)
+                return false;
+
+              // 2. Among non-RELATIVE relocations, compare if relocation has
+              // symbol info
               if (!hasSymInfo(X)) {
                 if (hasSymInfo(Y))
                   return true;
               } else if (!hasSymInfo(Y)) {
                 return false;
               } else {
-                // 2. compare the symbol index
+                // 3. compare the symbol index
                 size_t symIdxX = getDynSymbolIdx(X->symInfo()->outSymbol());
                 size_t symIdxY = getDynSymbolIdx(Y->symInfo()->outSymbol());
                 if (symIdxX < symIdxY)
@@ -3855,19 +3923,19 @@ void GNULDBackend::sortRelocation(ELFSection &pSection) {
                   return false;
               }
 
-              // 3. compare the relocation address
+              // 4. compare the relocation address
               if (X->place(m_Module) < Y->place(m_Module))
                 return true;
               if (X->place(m_Module) > Y->place(m_Module))
                 return false;
 
-              // 4. compare the relocation type
+              // 5. compare the relocation type
               if (X->type() < Y->type())
                 return true;
               if (X->type() > Y->type())
                 return false;
 
-              // 5. compare the addend
+              // 6. compare the addend
               if (X->addend() < Y->addend())
                 return true;
               if (X->addend() > Y->addend())
@@ -4127,7 +4195,7 @@ LDSymbol &GNULDBackend::defineSymbolforCopyReloc(eld::IRBuilder &pBuilder,
   copyRelocSect->addFragmentAndUpdateSize(frag);
   if (layoutInfo)
     layoutInfo->recordFragment(copyRelocSect->getInputFile(), copyRelocSect,
-                                  frag);
+                               frag);
 
   // change symbol binding to Global if it's a weak symbol
   ResolveInfo::Binding binding = (ResolveInfo::Binding)pSym->binding();
@@ -4652,7 +4720,7 @@ void GNULDBackend::makeVersionString() {
   LayoutInfo *layoutInfo = m_Module.getLayoutInfo();
   if (layoutInfo)
     layoutInfo->recordFragment(F->getOwningSection()->getInputFile(),
-                      F->getOwningSection(), F);
+                               F->getOwningSection(), F);
   // Add LLVM revision information as well if available.
   // This check is required because eld do not necessarily have access
   // to LLVM revision information.
@@ -4664,8 +4732,9 @@ void GNULDBackend::makeVersionString() {
         make<StringFragment>(LLVMRevisionInfo, m_pComment);
     m_pComment->addFragmentAndUpdateSize(LLVMRevisionF);
     if (layoutInfo)
-      layoutInfo->recordFragment(LLVMRevisionF->getOwningSection()->getInputFile(),
-                        LLVMRevisionF->getOwningSection(), LLVMRevisionF);
+      layoutInfo->recordFragment(
+          LLVMRevisionF->getOwningSection()->getInputFile(),
+          LLVMRevisionF->getOwningSection(), LLVMRevisionF);
   }
   if ((LinkerConfig::Object != config().codeGenType()) &&
       (LinkerConfig::DynObj != config().codeGenType()) &&
@@ -4684,8 +4753,9 @@ void GNULDBackend::makeVersionString() {
   Fragment *CmdLineFragment = make<StringFragment>(CommandLine, m_pComment);
   m_pComment->addFragmentAndUpdateSize(CmdLineFragment);
   if (layoutInfo)
-    layoutInfo->recordFragment(CmdLineFragment->getOwningSection()->getInputFile(),
-                      CmdLineFragment->getOwningSection(), CmdLineFragment);
+    layoutInfo->recordFragment(
+        CmdLineFragment->getOwningSection()->getInputFile(),
+        CmdLineFragment->getOwningSection(), CmdLineFragment);
 }
 
 bool GNULDBackend::addPhdrsIfNeeded(void) {

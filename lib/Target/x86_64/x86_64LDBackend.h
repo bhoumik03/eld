@@ -60,6 +60,8 @@ public:
 
   void doCreateProgramHdrs() override { return; }
 
+  bool finalizeScanRelocations() override;
+
   Stub *getBranchIslandStub(Relocation *pReloc,
                             int64_t pTargetValue) const override {
     return nullptr;
@@ -92,13 +94,35 @@ public:
   void doPreLayout() override;
 
   DynRelocType getDynRelocType(const Relocation *X) const override {
-    if (X->type() == llvm::ELF::R_X86_64_GLOB_DAT)
+    using namespace llvm::ELF;
+    switch (X->type()) {
+    case R_X86_64_GLOB_DAT:
       return DynRelocType::GLOB_DAT;
-    if (X->type() == llvm::ELF::R_X86_64_JUMP_SLOT)
+    case R_X86_64_JUMP_SLOT:
       return DynRelocType::JMP_SLOT;
-    if (X->type() == llvm::ELF::R_X86_64_RELATIVE)
+    case R_X86_64_RELATIVE:
       return DynRelocType::RELATIVE;
-    return DynRelocType::DEFAULT;
+    // TLS dynamic relocations
+    case R_X86_64_DTPMOD64: {
+      // For TLS Local-Dynamic model, we create a DTPMOD64 relocation without
+      // an associated symbol (symInfo() may be null). Treat that as local.
+      if (!X->symInfo() || X->symInfo()->binding() == ResolveInfo::Local)
+        return DynRelocType::DTPMOD_LOCAL;
+      return DynRelocType::DTPMOD_GLOBAL;
+    }
+    case R_X86_64_DTPOFF64: {
+      if (!X->symInfo() || X->symInfo()->binding() == ResolveInfo::Local)
+        return DynRelocType::DTPREL_LOCAL;
+      return DynRelocType::DTPREL_GLOBAL;
+    }
+    case R_X86_64_TPOFF64: {
+      if (!X->symInfo() || X->symInfo()->binding() == ResolveInfo::Local)
+        return DynRelocType::TPREL_LOCAL;
+      return DynRelocType::TPREL_GLOBAL;
+    }
+    default:
+      return DynRelocType::DEFAULT;
+    }
   }
 
   void recordRelativeReloc(Relocation *DynRel, const Relocation *OrigRel) {
@@ -108,7 +132,9 @@ public:
   bool hasSymInfo(const Relocation *X) const override {
     if (X->type() == llvm::ELF::R_X86_64_RELATIVE)
       return false;
-    if (X->symInfo()->binding() == ResolveInfo::Local)
+    if (!X->symInfo())
+      return false;
+    if (X->symInfo() && X->symInfo()->binding() == ResolveInfo::Local)
       return false;
     return true;
   }
@@ -121,6 +147,8 @@ private:
   size_t getRelaEntrySize() override { return 24; }
 
   uint64_t maxBranchOffset() override { return 0; }
+
+  void defineGOTSymbol(Fragment &F);
 
 private:
   Relocator *m_pRelocator;
