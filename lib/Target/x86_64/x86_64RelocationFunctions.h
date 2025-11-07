@@ -38,6 +38,9 @@ x86_64Relocator::Result relocGOTTPOFF(Relocation &pEntry,
                                       RelocationDescription &RelocDesc);
 x86_64Relocator::Result relocTLSGD(Relocation &pEntry, x86_64Relocator &pParent,
                                    RelocationDescription &RelocDesc);
+x86_64Relocator::Result relocTLSLD(Relocation &pEntry, x86_64Relocator &pParent,
+                                   RelocationDescription &RelocDesc);
+
 struct RelocationDescription;
 
 typedef Relocator::Result (*ApplyFunctionType)(
@@ -118,7 +121,7 @@ struct RelocationDescription x86RelocDesc[] = {
     {/*.func = */ &relocTLSGD,
      /*.type = */ llvm::ELF::R_X86_64_TLSGD,
      /*.forceVerify = */ false},
-    {/*.func = */ none,
+    {/*.func = */ &relocTLSLD,
      /*.type = */ llvm::ELF::R_X86_64_TLSLD,
      /*.forceVerify = */ false},
     {/*.func = */ &relocDTPOFF,
