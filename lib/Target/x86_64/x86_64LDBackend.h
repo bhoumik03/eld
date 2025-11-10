@@ -14,6 +14,7 @@
 #include "eld/Target/GNULDBackend.h"
 #include "x86_64ELFDynamic.h"
 #include "x86_64PLT.h"
+#include "llvm/BinaryFormat/ELF.h"
 
 namespace eld {
 
@@ -130,6 +131,13 @@ public:
   }
 
   bool hasSymInfo(const Relocation *X) const override {
+    if (X->type() == llvm::ELF::R_X86_64_DTPMOD64) {
+      llvm::errs() << "DTPMOD64\n";
+      if (X->symInfo()) {
+        llvm::errs() << "has sym info\n";
+      } else
+        llvm::errs() << "no sym info\n";
+    }
     if (X->type() == llvm::ELF::R_X86_64_RELATIVE)
       return false;
     if (!X->symInfo())

@@ -3894,17 +3894,13 @@ void GNULDBackend::sortRelocation(ELFSection &pSection) {
   std::sort(pSection.getRelocations().begin(), pSection.getRelocations().end(),
             [this](Relocation *X, Relocation *Y) {
               // 1. RELATIVE relocations always come first
-              bool xIsRelative = (X->type() == llvm::ELF::R_X86_64_RELATIVE ||
-                                  X->type() == llvm::ELF::R_ARM_RELATIVE ||
-                                  X->type() == llvm::ELF::R_AARCH64_RELATIVE);
-              bool yIsRelative = (Y->type() == llvm::ELF::R_X86_64_RELATIVE ||
-                                  Y->type() == llvm::ELF::R_ARM_RELATIVE ||
-                                  Y->type() == llvm::ELF::R_AARCH64_RELATIVE);
+              // bool xIsRelative = (X->type() == llvm::ELF::R_X86_64_RELATIVE);
+              // bool yIsRelative = (Y->type() == llvm::ELF::R_X86_64_RELATIVE);
 
-              if (xIsRelative && !yIsRelative)
-                return true;
-              if (!xIsRelative && yIsRelative)
-                return false;
+              // if (xIsRelative && !yIsRelative)
+              //   return true;
+              // if (!xIsRelative && yIsRelative)
+              //   return false;
 
               // 2. Among non-RELATIVE relocations, compare if relocation has
               // symbol info

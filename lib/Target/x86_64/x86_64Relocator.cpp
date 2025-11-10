@@ -308,7 +308,8 @@ void x86_64Relocator::scanLocalReloc(InputFile &pInputFile, Relocation &pReloc,
 
 void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
                                       eld::IRBuilder &pBuilder,
-                                      ELFSection &pSection, CopyRelocs &) {
+                                      ELFSection &pSection,
+                                      CopyRelocs &copyRelocs) {
 
   ELFObjectFile *Obj = llvm::dyn_cast<ELFObjectFile>(&pInputFile);
   // rsym - The relocation target symbol
@@ -317,21 +318,71 @@ void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
   switch (pReloc.type()) {
   case llvm::ELF::R_X86_64_64: {
     std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
-    bool isSymbolPreemptible = m_Target.isSymbolPreemptible(*rsym);
-    const bool isAbsReloc = (pReloc.type() == llvm::ELF::R_X86_64_64);
+    const bool isAbsReloc = true;
+    const bool preemptible = m_Target.isSymbolPreemptible(*rsym);
     if (getTarget().symbolNeedsDynRel(*rsym, (rsym->reserved() & ReservePLT),
                                       isAbsReloc)) {
+      // Prefer COPY relocations for data symbols referenced from non-PIC
+      // executables
+      if (getTarget().symbolNeedsCopyReloc(pReloc, *rsym)) {
+        if (config().options().hasNoCopyReloc()) {
+          // Honor -z nocopyreloc
+          config().raise(Diag::copyrelocs_is_error)
+              << rsym->name() << pInputFile.getInput()->decoratedPath()
+              << rsym->resolvedOrigin()->getInput()->decoratedPath();
+          return;
+        }
+        copyRelocs.insert(rsym);
+        // Do not emit a dynamic relocation here; copy reloc will be created
+        // later
+        return;
+      }
+      // No copy reloc needed: emit a dynamic relocation as before
       rsym->setReserved(rsym->reserved() | ReserveRel);
       getTarget().checkAndSetHasTextRel(pSection);
-      if (pReloc.type() == llvm::ELF::R_X86_64_64) {
-        helper_DynRel_init(Obj, &pReloc, rsym, pReloc.targetRef()->frag(),
-                           pReloc.targetRef()->offset(),
-                           isSymbolPreemptible ? llvm::ELF::R_X86_64_64
-                                               : llvm::ELF::R_X86_64_RELATIVE,
-                           m_Target);
-      }
+      helper_DynRel_init(Obj, &pReloc, rsym, pReloc.targetRef()->frag(),
+                         pReloc.targetRef()->offset(),
+                         preemptible ? llvm::ELF::R_X86_64_64
+                                     : llvm::ELF::R_X86_64_RELATIVE,
+                         m_Target);
     }
+    return;
   }
+
+  // Handle smaller absolute relocations similarly: if a dynamic relocation
+  // would be required, force COPY reloc; otherwise leave as static relocation.
+  case llvm::ELF::R_X86_64_32:
+  case llvm::ELF::R_X86_64_32S:
+  case llvm::ELF::R_X86_64_16:
+  case llvm::ELF::R_X86_64_8: {
+    std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
+    const bool isAbsReloc = true;
+    if (getTarget().symbolNeedsDynRel(*rsym, (rsym->reserved() & ReservePLT),
+                                      isAbsReloc)) {
+      // For truncated absolute relocations, we cannot emit a suitable dynamic
+      // reloc; require a COPY relocation for data symbols.
+      if (getTarget().symbolNeedsCopyReloc(pReloc, *rsym)) {
+        if (config().options().hasNoCopyReloc()) {
+          config().raise(Diag::copyrelocs_is_error)
+              << rsym->name() << pInputFile.getInput()->decoratedPath()
+              << rsym->resolvedOrigin()->getInput()->decoratedPath();
+          return;
+        }
+        copyRelocs.insert(rsym);
+        return;
+      }
+      // No COPY reloc possible: this is a non-PIC relocation to a preemptible
+      // symbol; error out.
+      config().raise(Diag::non_pic_relocation)
+          << (int)pReloc.type() << pReloc.symInfo()->name()
+          << pReloc.getSourcePath(config().options());
+      m_Target.getModule().setFailure(true);
+      return;
+    }
+    // No dynamic relocation needed; keep as static relocation.
+    return;
+  }
+
   case llvm::ELF::R_X86_64_PLT32: {
     std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
     if (!m_Target.isSymbolPreemptible(*rsym))
