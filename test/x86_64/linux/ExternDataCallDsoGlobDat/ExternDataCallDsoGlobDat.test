@@ -1,0 +1,13 @@
+#--ExternDataCallDsoGlobDat.test-------SharedChain--#
+#BEGIN_COMMENT
+#Verifies preemptible data referenced across DSOs uses GLOB_DAT relocations
+#END_COMMENT
+#START_TEST
+RUN: %clang %clangopts -fPIC -c %p/Inputs/libb.c -o %t.b.o
+RUN: %link %linkopts -shared -o %t.libb.so %t.b.o
+RUN: %clang %clangopts -fPIC -c %p/Inputs/liba.c -o %t.a.o
+RUN: %link %linkopts -shared -o %t.liba.so %t.a.o %t.libb.so
+RUN: %clang %clangopts -c %p/Inputs/lib_main.c -o %t.lib_main.o
+RUN: %link %linkopts -o %t.globdat.out %t.lib_main.o %t.liba.so %t.libb.so
+RUN: %t.globdat.out; echo $? | %filecheck %s --check-prefix=EXITCODE
+EXITCODE: 42

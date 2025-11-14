@@ -33,7 +33,8 @@ using namespace llvm;
 //===----------------------------------------------------------------------===//
 x86_64LDBackend::x86_64LDBackend(Module &pModule, x86_64Info *pInfo)
     : GNULDBackend(pModule, pInfo), m_pRelocator(nullptr), m_pDynamic(nullptr),
-      m_pEndOfImage(nullptr) {}
+      m_pEndOfImage(nullptr), m_pIRelativeStart(nullptr),
+      m_pIRelativeEnd(nullptr) {}
 
 x86_64LDBackend::~x86_64LDBackend() {}
 
@@ -135,7 +136,16 @@ bool x86_64LDBackend::finalizeTargetSymbols() {
     alignAddress(imageEnd, 8);
     m_pEndOfImage->setValue(imageEnd + 1);
   }
-
+  // Finalize __rela_iplt range symbols for static executables when
+  // output sections are available.
+  if (config().isCodeStatic() && m_pIRelativeStart && m_pIRelativeEnd &&
+      getRelaPLT()->getOutputSection()) {
+    m_pIRelativeStart->setValue(
+        getRelaPLT()->getOutputSection()->getSection()->addr());
+    m_pIRelativeEnd->setValue(
+        getRelaPLT()->getOutputSection()->getSection()->addr() +
+        getRelaPLT()->getOutputSection()->getSection()->size());
+  }
   return true;
 }
 
@@ -151,6 +161,49 @@ void x86_64LDBackend::doPreLayout() {
                           getRelaEntrySize());
     m_Module.addOutputSection(getRelaPLT());
     m_Module.addOutputSection(getRelaDyn());
+    // Range symbols finalized in finalizeTargetSymbols.
+  }
+}
+
+// Define synthetic range symbols for IRELATIVE processing in static
+// executables. Values are finalized to bound the .rela.plt output section.
+void x86_64LDBackend::defineIRelativeRange(ResolveInfo &pSym) {
+  // It is up to linker script to define those symbols.
+  if (m_Module.getScript().linkerScriptHasSectionsCommand())
+    return;
+
+  // Define the copy symbol in the bss section and resolve it
+  auto SymbolName = "__rela_iplt_start";
+  if (!m_pIRelativeStart && !m_pIRelativeEnd) {
+    m_pIRelativeStart =
+        m_Module.getIRBuilder()
+            ->addSymbol<IRBuilder::Force, IRBuilder::Resolve>(
+                m_Module.getInternalInput(Module::Script), SymbolName,
+                ResolveInfo::Object, ResolveInfo::Define,
+                (ResolveInfo::Binding)pSym.binding(),
+                0,   // size
+                0x0, // value
+                FragmentRef::null(), (ResolveInfo::Visibility)pSym.other());
+    if (m_Module.getConfig().options().isSymbolTracingRequested() &&
+        m_Module.getConfig().options().traceSymbol(SymbolName)) {
+      config().raise(Diag::target_specific_symbol) << SymbolName;
+    }
+    m_pIRelativeStart->setShouldIgnore(false);
+    SymbolName = "__rela_iplt_end";
+    m_pIRelativeEnd =
+        m_Module.getIRBuilder()
+            ->addSymbol<IRBuilder::Force, IRBuilder::Resolve>(
+                m_Module.getInternalInput(Module::Script), SymbolName,
+                ResolveInfo::Object, ResolveInfo::Define,
+                (ResolveInfo::Binding)pSym.binding(),
+                pSym.size(), // size
+                0x0,         // value
+                FragmentRef::null(), (ResolveInfo::Visibility)pSym.other());
+    if (m_Module.getConfig().options().isSymbolTracingRequested() &&
+        m_Module.getConfig().options().traceSymbol(SymbolName)) {
+      config().raise(Diag::target_specific_symbol) << SymbolName;
+    }
+    m_pIRelativeEnd->setShouldIgnore(false);
   }
 }
 
@@ -263,7 +316,8 @@ x86_64GOT *x86_64LDBackend::findEntryInGOT(ResolveInfo *I) const {
 }
 
 // Create PLT entry.
-x86_64PLT *x86_64LDBackend::createPLT(ELFObjectFile *Obj, ResolveInfo *R) {
+x86_64PLT *x86_64LDBackend::createPLT(ELFObjectFile *Obj, ResolveInfo *R,
+                                      bool isIRelative) {
   bool hasNow = config().options().hasNow();
   if (R != nullptr && ((config().options().isSymbolTracingRequested() &&
                         config().options().traceSymbol(*R)) ||
@@ -272,26 +326,60 @@ x86_64PLT *x86_64LDBackend::createPLT(ELFObjectFile *Obj, ResolveInfo *R) {
 
   // Create PLT0 if this is the first PLT entry. PLT0 is the common
   // trampoline that all PLTN entries jump to for symbol resolution.
-  if (!hasNow && !getPLT()->getFragmentList().size()) {
+  if (!hasNow && !isIRelative && !getPLT()->getFragmentList().size()) {
     x86_64PLT0::Create(*m_Module.getIRBuilder(),
                        createGOT(GOT::GOTPLT0, nullptr, nullptr), getPLT(),
                        nullptr, hasNow);
   }
-  x86_64PLT *P =
-      x86_64PLTN::Create(*m_Module.getIRBuilder(),
-                         createGOT(GOT::GOTPLTN, Obj, R), getPLT(), R, hasNow);
+  x86_64PLT *P = x86_64PLTN::Create(
+      *m_Module.getIRBuilder(), createGOT(GOT::GOTPLTN, Obj, R), getPLT(), R,
+      /*BindNow*/ (hasNow || isIRelative));
 
   // The relocation index is set before getContent() is called during
   // layout, as it is embedded directly in the PLT entry's instruction bytes.
   x86_64PLTN *pltn = llvm::cast<x86_64PLTN>(P);
   pltn->setRelocIndex(m_RelaPLTIndex);
 
-  // Create JUMP_SLOT relocation entry in .rela.plt section for dynamic linker
-  // The dynamic linker uses this to resolve the function address on first call
+  // // Create relocation entry in .rela.plt section.
+  // // For IFUNC (isIRelative), emit IRELATIVE targeting the GOTPLT slot.
+  // // Otherwise, emit JUMP_SLOT as usual.
+  // Relocation &rela_entry = *Obj->getRelaPLT()->createOneReloc();
+  // Fragment *F = P->getGOT();
+  // if (isIRelative) {
+  //   rela_entry.setType(llvm::ELF::R_X86_64_IRELATIVE);
+  //   // Target is the GOTPLT slot (no symbol index for IRELATIVE).
+  //   rela_entry.setTargetRef(make<FragmentRef>(*F, 0));
+  //   // Ensure there is no symbol associated with IRELATIVE.
+  //   rela_entry.setSymInfo(nullptr);
+  //   // The addend is the resolver address in .text. Use the input symbol
+  //   value. if (R && R->outSymbol() && R->outSymbol()->hasFragRef()) {
+  //     FragmentRef *ref = R->outSymbol()->fragRef();
+  //     ELFSection *osec = ref->frag()->getOwningSection();
+  //     // Compute absolute address of the input symbol (resolver) in .text.
+  //     uint64_t resolverVA = osec->getOutputELFSection()->addr() +
+  //     ref->offset(); rela_entry.setAddend(resolverVA);
+  //   }
+  //   // Ensure the GOTPLT slot is populated with a symbol value at link time,
+  //   // which the static startup will replace with the implementation.
+  //   F->getOwningSection()->getFragmentList().front();
+  //   P->getGOT()->setValueType(GOT::SymbolValue);
+  //   // In static executables, define __rela_iplt_{start,end} for startup.
+  //   defineIRelativeRange(*R);
+  // } else {
+  //   rela_entry.setType(llvm::ELF::R_X86_64_JUMP_SLOT);
+  //   rela_entry.setTargetRef(make<FragmentRef>(*F, 0));
+  //   rela_entry.setSymInfo(R);
+  // }
+
   Relocation &rela_entry = *Obj->getRelaPLT()->createOneReloc();
-  rela_entry.setType(llvm::ELF::R_X86_64_JUMP_SLOT);
-  Fragment *F = P->getGOT();
-  rela_entry.setTargetRef(make<FragmentRef>(*F, 0));
+  rela_entry.setType(isIRelative ? llvm::ELF::R_X86_64_IRELATIVE
+                                 : llvm::ELF::R_X86_64_JUMP_SLOT);
+  rela_entry.setTargetRef(make<FragmentRef>(*P->getGOT(), 0));
+  if (isIRelative) {
+    P->getGOT()->setValueType(GOT::SymbolValue);
+    if (auto *gpltn = llvm::dyn_cast<x86_64GOTPLTN>(P->getGOT()))
+      gpltn->setNoInit(true);
+  }
   rela_entry.setSymInfo(R);
 
   m_RelaPLTIndex++;

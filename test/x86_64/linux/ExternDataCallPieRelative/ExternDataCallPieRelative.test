@@ -1,0 +1,10 @@
+#--ExternDataCallPieRelative.test-------Executable--#
+#BEGIN_COMMENT
+#Verifies non-preemptible data via GOT in a PIE uses RELATIVE relocations
+#END_COMMENT
+#START_TEST
+RUN: %clang %clangopts -c %p/Inputs/pie_rel_defs.c -o %t.pie_defs.o
+RUN: %clang %clangopts -c %p/Inputs/pie_rel_use.c -o %t.pie_use.o
+RUN: %link %linkopts -pie -o %t.pie.out %t.pie_defs.o %t.pie_use.o
+RUN: %t.pie.out; echo $? | %filecheck %s --check-prefix=EXITCODE
+EXITCODE: 13

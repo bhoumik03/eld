@@ -73,7 +73,6 @@ Relocator::Size x86_64Relocator::getSize(Relocation::Type pType) const {
 
 // Check if the relocation is invalid
 bool x86_64Relocator::isInvalidReloc(Relocation &pReloc) const {
-
   switch (pReloc.type()) {
   case llvm::ELF::R_X86_64_NONE:
   case llvm::ELF::R_X86_64_64:
@@ -99,7 +98,7 @@ bool x86_64Relocator::isInvalidReloc(Relocation &pReloc) const {
   case llvm::ELF::R_X86_64_TLSLD:
     return false;
   default:
-    return true; // Other Relocations are not supported as of now
+    return true;
   }
 }
 
@@ -193,7 +192,8 @@ Relocation *helper_DynRel_init(ELFObjectFile *Obj, Relocation *R,
     rela_entry->setAddend(0);
   }
 
-  if (R && (pType == llvm::ELF::R_X86_64_RELATIVE)) {
+  if (R && (pType == llvm::ELF::R_X86_64_RELATIVE ||
+            pType == llvm::ELF::R_X86_64_IRELATIVE)) {
     B.recordRelativeReloc(rela_entry, R);
   }
   return rela_entry;
@@ -383,14 +383,45 @@ void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
     return;
   }
 
+    // case llvm::ELF::R_X86_64_PC32: {
+    //   std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
+    //   // For static executables, if the target is IFUNC, create a PLT/GOTPLT
+    //   // pair with IRELATIVE so the call will go through IPLT and the GOTPLT
+    //   // slot is initialized at startup.
+    //   if (rsym->type() == ResolveInfo::IndirectFunc &&
+    //   config().isCodeStatic()) {
+    //     m_Target.createPLT(Obj, rsym, /*isIRelative=*/true);
+    //     rsym->setReserved(rsym->reserved() | ReservePLT);
+    //     m_Target.defineIRelativeRange(*rsym);
+    //   }
+    //   return;
+    // }
+
   case llvm::ELF::R_X86_64_PLT32: {
-    std::lock_guard<std::mutex> relocGuard(m_RelocMutex);
-    if (!m_Target.isSymbolPreemptible(*rsym))
+    // return if we already create plt for this symbol
+    if (rsym->reserved() & ReservePLT)
       return;
-    if (!(rsym->reserved() & ReservePLT)) {
-      m_Target.createPLT(Obj, rsym);
+
+    // create IRELATIVE for IFUNC symbol
+    if (rsym->type() == ResolveInfo::IndirectFunc && config().isCodeStatic()) {
+      m_Target.createPLT(Obj, rsym, true);
       rsym->setReserved(rsym->reserved() | ReservePLT);
+      // x86_64LDBackend &backend = getTarget();
+      // backend.defineIRelativeRange(*rsym);
+      return;
     }
+    // if symbol is defined in the output file and it's not
+    // preemptible, no need plt
+    if (!getTarget().isSymbolPreemptible(*rsym)) {
+      return;
+    }
+
+    // Symbol needs PLT entry, we need to reserve a PLT entry
+    // and the corresponding GOT and dynamic relocation entry
+    // in .got and .rel.plt.
+    m_Target.createPLT(Obj, rsym);
+    // set PLT bit
+    rsym->setReserved(rsym->reserved() | ReservePLT);
     return;
   }
 
@@ -709,20 +740,20 @@ Relocator::Result eld::relocGOTTPOFF(Relocation &pReloc,
   Relocator::DWord P = pReloc.place(pParent.module());
   // Find the GOT entry created during scan for this symbol
   x86_64GOT *gotEntry = pParent.getTarget().findEntryInGOT(pReloc.symInfo());
-  llvm::outs() << "[GOTTPOFF] sym='" << pReloc.symInfo()->name() << "'\n";
-  if (!gotEntry) {
-    llvm::outs() << "[GOTTPOFF] ERROR: missing GOT entry for sym\n";
-    return Relocator::BadReloc;
-  }
+  // llvm::outs() << "[GOTTPOFF] sym='" << pReloc.symInfo()->name() << "'\n";
+  // if (!gotEntry) {
+  //   llvm::outs() << "[GOTTPOFF] ERROR: missing GOT entry for sym\n";
+  //   return Relocator::BadReloc;
+  // }
   uint64_t Sg = gotEntry->getAddr(DiagEngine);
-  llvm::outs() << "[GOTTPOFF] GOT_entry_addr="
-               << llvm::format("0x%llx", (unsigned long long)Sg)
-               << " A=" << llvm::format("0x%llx", (unsigned long long)A)
-               << " P=" << llvm::format("0x%llx", (unsigned long long)P)
-               << "\n";
+  // llvm::outs() << "[GOTTPOFF] GOT_entry_addr="
+  //              << llvm::format("0x%llx", (unsigned long long)Sg)
+  //              << " A=" << llvm::format("0x%llx", (unsigned long long)A)
+  //              << " P=" << llvm::format("0x%llx", (unsigned long long)P)
+  //              << "\n";
   uint64_t Result = Sg + A - P;
-  llvm::outs() << "[GOTTPOFF] disp(GOT + A - P)="
-               << llvm::format("0x%llx", (unsigned long long)Result) << "\n";
+  // llvm::outs() << "[GOTTPOFF] disp(GOT + A - P)="
+  //              << llvm::format("0x%llx", (unsigned long long)Result) << "\n";
   return applyRel(pReloc, Result, pRelocDesc, DiagEngine, options);
 }
 
