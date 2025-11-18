@@ -178,7 +178,10 @@ Relocation *helper_DynRel_init(ELFObjectFile *Obj, Relocation *R,
     // non-preemptible symbols under PIC/PIE, we want r_addend = S.
     // The writer computes r_addend as getRelocator()->getSymValue(R) + RAddend.
     // Set RAddend to 0 here so the writer uses just the symbol value.
-    rela_entry->setAddend(0);
+    if (R->type() == llvm::ELF::R_X86_64_64) {
+      rela_entry->setAddend(R->addend());
+    } else
+      rela_entry->setAddend(0);
   } else if (R) {
     // For TLS IE GOT slots, ignore the instruction-local -4 addend.
     if (pType == llvm::ELF::R_X86_64_TPOFF64 ||
@@ -406,8 +409,10 @@ void x86_64Relocator::scanGlobalReloc(InputFile &pInputFile, Relocation &pReloc,
     if (rsym->type() == ResolveInfo::IndirectFunc && config().isCodeStatic()) {
       m_Target.createPLT(Obj, rsym, true);
       rsym->setReserved(rsym->reserved() | ReservePLT);
-      // x86_64LDBackend &backend = getTarget();
-      // backend.defineIRelativeRange(*rsym);
+      x86_64LDBackend &backend = getTarget();
+      llvm::errs() << "irelative symbol " << rsym->name() << " "
+                   << rsym->visibility() << " " << rsym->binding() << "\n";
+      backend.defineIRelativeRange(*rsym);
       return;
     }
     // if symbol is defined in the output file and it's not

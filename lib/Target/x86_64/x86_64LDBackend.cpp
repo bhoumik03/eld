@@ -140,12 +140,20 @@ bool x86_64LDBackend::finalizeTargetSymbols() {
   // output sections are available.
   if (config().isCodeStatic() && m_pIRelativeStart && m_pIRelativeEnd &&
       getRelaPLT()->getOutputSection()) {
-    m_pIRelativeStart->setValue(
-        getRelaPLT()->getOutputSection()->getSection()->addr());
-    m_pIRelativeEnd->setValue(
-        getRelaPLT()->getOutputSection()->getSection()->addr() +
-        getRelaPLT()->getOutputSection()->getSection()->size());
+    ELFSection *relaPltSec = getRelaPLT()->getOutputSection()->getSection();
+
+    m_pIRelativeStart->setValue(relaPltSec->addr());
+    m_pIRelativeEnd->setValue(relaPltSec->addr() + relaPltSec->size());
+
+    // Associate symbols with the .rela.plt section
+    if (!relaPltSec->getFragmentList().empty()) {
+      Fragment *firstFrag = *relaPltSec->getFragmentList().begin();
+      m_pIRelativeStart->setFragmentRef(make<FragmentRef>(*firstFrag, 0));
+      m_pIRelativeEnd->setFragmentRef(
+          make<FragmentRef>(*firstFrag, relaPltSec->size()));
+    }
   }
+
   return true;
 }
 
@@ -180,30 +188,20 @@ void x86_64LDBackend::defineIRelativeRange(ResolveInfo &pSym) {
             ->addSymbol<IRBuilder::Force, IRBuilder::Resolve>(
                 m_Module.getInternalInput(Module::Script), SymbolName,
                 ResolveInfo::Object, ResolveInfo::Define,
-                (ResolveInfo::Binding)pSym.binding(),
-                0,   // size
-                0x0, // value
-                FragmentRef::null(), (ResolveInfo::Visibility)pSym.other());
-    if (m_Module.getConfig().options().isSymbolTracingRequested() &&
-        m_Module.getConfig().options().traceSymbol(SymbolName)) {
-      config().raise(Diag::target_specific_symbol) << SymbolName;
-    }
-    m_pIRelativeStart->setShouldIgnore(false);
-    SymbolName = "__rela_iplt_end";
+                ResolveInfo::Local, //
+                0,                  // size
+                0x0,                // value
+                FragmentRef::null(), ResolveInfo::Hidden);
+
     m_pIRelativeEnd =
         m_Module.getIRBuilder()
             ->addSymbol<IRBuilder::Force, IRBuilder::Resolve>(
-                m_Module.getInternalInput(Module::Script), SymbolName,
+                m_Module.getInternalInput(Module::Script), "__rela_iplt_end",
                 ResolveInfo::Object, ResolveInfo::Define,
-                (ResolveInfo::Binding)pSym.binding(),
-                pSym.size(), // size
-                0x0,         // value
-                FragmentRef::null(), (ResolveInfo::Visibility)pSym.other());
-    if (m_Module.getConfig().options().isSymbolTracingRequested() &&
-        m_Module.getConfig().options().traceSymbol(SymbolName)) {
-      config().raise(Diag::target_specific_symbol) << SymbolName;
-    }
-    m_pIRelativeEnd->setShouldIgnore(false);
+                ResolveInfo::Local, //
+                0,                  // size
+                0x0,                // value
+                FragmentRef::null(), ResolveInfo::Hidden);
   }
 }
 
